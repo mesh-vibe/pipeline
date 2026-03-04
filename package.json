@@ -1,0 +1,27 @@
+{
+  "name": "meshvibe-pipeline",
+  "version": "0.1.0",
+  "description": "Autonomous SDLC pipeline for mesh-vibe projects",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "pipeline": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "node_modules/.bin/tsc -p tsconfig.build.json",
+    "dev": "node_modules/.bin/tsc -p tsconfig.build.json --watch",
+    "test": "node_modules/.bin/vitest run",
+    "lint": "node_modules/.bin/tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
