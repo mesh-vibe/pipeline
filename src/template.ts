@@ -1,4 +1,5 @@
 import type { ProjectType } from "./types.js";
+import { timestamp } from "./project.js";
 
 function titleCase(name: string): string {
   return name
@@ -50,7 +51,7 @@ project-type: ${type}
 phase: design
 priority: ${priority}
 created: ${date}
-updated: ${date}
+updated: ${timestamp()}
 approved-at:
 stuck-threshold-minutes: 120
 cancelled: false
@@ -114,7 +115,7 @@ project-type: ${type}
 phase: implement
 priority: ${priority}
 created: ${date}
-updated: ${date}
+updated: ${timestamp()}
 approved-at:
 stuck-threshold-minutes: 120
 cancelled: false

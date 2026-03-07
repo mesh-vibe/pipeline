@@ -631,7 +631,7 @@ program
     const ts = timestamp();
     updateProject(name, {
       phase: "implement",
-      updated: today(),
+      updated: timestamp(),
       "approved-at": ts,
     });
     appendPhaseHistory(
@@ -698,7 +698,7 @@ program
     }
 
     const ts = timestamp();
-    updateProject(name, { phase: next, updated: today() });
+    updateProject(name, { phase: next, updated: timestamp() });
     appendPhaseHistory(name, `${ts} — Phase: ${phaseTyped} → ${next}`);
 
     if (checked < total) {
@@ -734,7 +734,7 @@ program
     }
 
     const ts = timestamp();
-    updateProject(name, { phase: prev, updated: today() });
+    updateProject(name, { phase: prev, updated: timestamp() });
     uncheckPhaseGates(name, prev);
     appendPhaseHistory(
       name,
@@ -845,7 +845,7 @@ program
             console.log(`Project '${name}' is archived. Reactivating...`);
             moveFromArchive(name);
             projectDir = getProjectDir(name);
-            updateProject(name, { phase: "implement", updated: today() });
+            updateProject(name, { phase: "implement", updated: timestamp() });
             appendPhaseHistory(
               name,
               `${timestamp()} — Reactivated from archive for bug fix`,
@@ -905,7 +905,7 @@ program
       "cancelled-reason": reason,
       "cancelled-at": ts,
       "cancelled-from": phase as string,
-      updated: today(),
+      updated: timestamp(),
     });
     appendPhaseHistory(
       name,
@@ -1004,7 +1004,7 @@ program
     }
 
     const ts = timestamp();
-    updateProject(name, { updated: today() });
+    updateProject(name, { updated: timestamp() });
     appendPhaseHistory(name, `${ts} — Archived (completed)`);
 
     moveToArchive(name);
