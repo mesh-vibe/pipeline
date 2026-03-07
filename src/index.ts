@@ -19,6 +19,8 @@ export {
   getPipelineDir,
   getActiveDir,
   getArchiveDir,
+  getSpecDir,
+  getSpecFlowDir,
   getProjectDir,
   getArchivedProjectDir,
   getProjectFile,

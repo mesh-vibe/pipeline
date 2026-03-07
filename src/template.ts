@@ -40,10 +40,12 @@ export function generateProjectMd(
   type: ProjectType,
   priority: number,
   date: string,
+  flow: string = "sdlc",
 ): string {
   return `---
 name: ${name}
 description: ${description}
+flow: ${flow}
 project-type: ${type}
 phase: design
 priority: ${priority}
@@ -102,10 +104,12 @@ export function generateBugfixProjectMd(
   type: ProjectType,
   priority: number,
   date: string,
+  flow: string = "sdlc",
 ): string {
   return `---
 name: ${name}
 description: ${description}
+flow: ${flow}
 project-type: ${type}
 phase: implement
 priority: ${priority}

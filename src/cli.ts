@@ -8,9 +8,10 @@ import {
   readdirSync,
   renameSync,
   appendFileSync,
+  cpSync,
 } from "node:fs";
 import { execSync } from "node:child_process";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 
 import type { Phase, ProjectType } from "./types.js";
 import { VALID_TYPES, PHASES } from "./types.js";
@@ -18,10 +19,11 @@ import {
   getPipelineDir,
   getActiveDir,
   getArchiveDir,
+  getSpecDir,
+  getSpecFlowDir,
   getProjectDir,
   getArchivedProjectDir,
   getProjectFile,
-  getTemplateFile,
   getResearchBotDir,
   getPromptQueueProjectsDir,
 } from "./paths.js";
@@ -51,6 +53,106 @@ import {
 } from "./project.js";
 import { generateProjectMd, generateBugfixProjectMd, generateDefectMd } from "./template.js";
 import { installSkill } from "./templates/skill.md.js";
+import { installHeartbeatTask } from "./templates/heartbeat-task.md.js";
+
+const SPEC_README = `# vibe-flow-spec
+
+Flow specifications for the vibe-flow pipeline. Each subdirectory is a complete
+flow definition that projects can reference via \`flow: <name>\` in their frontmatter.
+
+## Installed Flows
+
+Each directory here is a flow spec. List them with:
+
+\`\`\`
+pipeline flow list
+\`\`\`
+
+## Creating a New Flow Spec
+
+A flow spec is a directory containing documentation that defines:
+
+1. **Phases** — the ordered stages a project moves through
+2. **Gates** — checkboxes that must be satisfied before advancing
+3. **Artifacts** — files produced at each phase
+
+### Required Structure
+
+\`\`\`
+my-flow-v1.0/
+  README.md              # Overview, when to use this flow
+  pipeline-architecture.md   # Phase definitions and gate specs
+  pipeline-cli-spec.md       # CLI behavior for this flow
+  pipeline-use-cases.md      # Usage scenarios
+  pipeline-acceptance-criteria.md  # Testable criteria
+\`\`\`
+
+### Gate Format
+
+Gates are defined as markdown checkboxes grouped under phase headings:
+
+\`\`\`markdown
+### Design
+- [ ] Design doc complete
+- [ ] Open questions resolved
+
+### Implement
+- [ ] Builds clean
+- [ ] Tests passing
+\`\`\`
+
+### Adding a Flow
+
+Copy your spec directory into this folder, or use:
+
+\`\`\`
+pipeline flow add <path-to-spec-dir>
+\`\`\`
+
+### Referencing a Flow
+
+When creating a project, specify the flow:
+
+\`\`\`
+pipeline create my-project "description" --flow SDLC-Point-Release-v1.0
+\`\`\`
+
+The flow name is stored in the project's frontmatter and used by the pipeline
+to determine which gates and phases apply.
+`;
+
+const VIBE_FLOW_README = `# vibe-flow
+
+Runtime data for the vibe-flow pipeline. Managed by the \`pipeline\` CLI.
+
+## Structure
+
+\`\`\`
+vibe-flow/
+  active/          # Projects currently in progress
+  archive/         # Completed or cancelled projects
+  README.md        # This file
+\`\`\`
+
+Each project is a directory under \`active/\` containing \`project.md\` (frontmatter +
+gates) and artifacts produced during its lifecycle (design docs, test results, etc.).
+
+## Flow Specs
+
+Flow specifications live in the sibling \`vibe-flow-spec/\` directory. See
+\`../vibe-flow-spec/README.md\` for how to create and install new flows.
+
+## Commands
+
+\`\`\`
+pipeline status          # overview of all active projects
+pipeline create <name>   # create a new project
+pipeline list            # compact project list
+pipeline flow list       # list installed flow specs
+\`\`\`
+
+Run \`pipeline --help\` for the full command list.
+`;
 
 const program = new Command();
 
@@ -71,11 +173,6 @@ program
     const activeDir = getActiveDir();
     const archiveDir = getArchiveDir();
 
-    if (existsSync(activeDir) && existsSync(archiveDir) && !opts.migrate) {
-      console.log(`Pipeline already initialized at ${pipelineDir}. No changes made.`);
-      return;
-    }
-
     if (!existsSync(activeDir)) {
       mkdirSync(activeDir, { recursive: true });
       console.log(`Created ${activeDir}`);
@@ -85,17 +182,36 @@ program
       console.log(`Created ${archiveDir}`);
     }
 
-    const templateFile = getTemplateFile();
-    if (!existsSync(templateFile)) {
-      const template = generateProjectMd(
-        "<project-name>",
-        "<description>",
-        "cli",
-        3,
-        "<date>",
-      );
-      writeFileSync(templateFile, template, "utf-8");
-      console.log(`Written ${templateFile}`);
+    const specDir = getSpecDir();
+    if (!existsSync(specDir)) {
+      mkdirSync(specDir, { recursive: true });
+      console.log(`Created ${specDir}`);
+    }
+
+    // Install SDLC flow spec
+    const sdlcSpecDir = getSpecFlowDir("SDLC-Point-Release-v1.0");
+    if (!existsSync(sdlcSpecDir)) {
+      const srcDir = join(getResearchBotDir(), "SDLC-Point-Release-v1.0");
+      if (existsSync(srcDir)) {
+        cpSync(srcDir, sdlcSpecDir, { recursive: true });
+        console.log(`Installed flow: SDLC-Point-Release-v1.0`);
+      } else {
+        console.log("Warning: SDLC spec not found in research-bot. Run 'pipeline flow add' to install manually.");
+      }
+    }
+
+    // Write spec README if missing
+    const specReadme = join(specDir, "README.md");
+    if (!existsSync(specReadme)) {
+      writeFileSync(specReadme, SPEC_README, "utf-8");
+      console.log(`Created ${specReadme}`);
+    }
+
+    // Write vibe-flow README if missing
+    const vfReadme = join(pipelineDir, "README.md");
+    if (!existsSync(vfReadme)) {
+      writeFileSync(vfReadme, VIBE_FLOW_README, "utf-8");
+      console.log(`Created ${vfReadme}`);
     }
 
     // Register with registry
@@ -109,6 +225,11 @@ program
     // Install skill
     installSkill();
     console.log("Installed Claude skill at ~/.claude/skills/pipeline/SKILL.md");
+
+    // Install heartbeat task
+    if (installHeartbeatTask()) {
+      console.log("Installed heartbeat task at ~/mesh-vibe/heartbeat/vibe-flow.md");
+    }
 
     if (opts.migrate) {
       console.log("\nMigrating existing items...");
@@ -219,6 +340,7 @@ program
   .argument("<description>", "One-line project description")
   .option("--type <type>", "Project type: service, cli, library, heartbeat-task", "cli")
   .option("--priority <n>", "Priority 1-5, 1=highest", "3")
+  .option("--flow <flow>", "Flow template to use", "sdlc")
   .action((name: string, description: string, opts) => {
     if (!NAME_REGEX.test(name)) {
       console.error(`Invalid project name '${name}'. Must be kebab-case.`);
@@ -254,7 +376,7 @@ program
     }
 
     mkdirSync(projectDir, { recursive: true });
-    const projectMd = generateProjectMd(name, description, type, priority, today());
+    const projectMd = generateProjectMd(name, description, type, priority, today(), opts.flow);
     writeFileSync(getProjectFile(name), projectMd, "utf-8");
 
     writeFileSync(
@@ -264,6 +386,7 @@ program
     );
 
     console.log(`Created project: ${name}`);
+    console.log(`  Flow: ${opts.flow}`);
     console.log(`  Type: ${type}`);
     console.log(`  Phase: design`);
     console.log(`  Priority: ${priority}`);
@@ -932,7 +1055,7 @@ program
 
     const projectDir = getProjectDir(name);
     mkdirSync(projectDir, { recursive: true });
-    const projectMd = generateProjectMd(name, description, "cli", 3, today());
+    const projectMd = generateProjectMd(name, description, "cli", 3, today(), "sdlc");
     writeFileSync(getProjectFile(name), projectMd, "utf-8");
     writeFileSync(
       join(projectDir, "discussion.md"),
@@ -967,6 +1090,61 @@ program
         `${fm.name.padEnd(25)} ${checked}/${total} gates  pri:${fm.priority}  ${fm.description}`,
       );
     }
+  });
+
+// --- flow ---
+
+const flowCmd = program
+  .command("flow")
+  .description("Manage flow specifications");
+
+flowCmd
+  .command("list")
+  .description("List installed flow specs")
+  .action(() => {
+    const specDir = getSpecDir();
+    if (!existsSync(specDir)) {
+      console.log("No flow specs installed. Run 'pipeline init' first.");
+      return;
+    }
+
+    const entries = readdirSync(specDir, { withFileTypes: true });
+    const flows = entries.filter((e) => e.isDirectory());
+
+    if (flows.length === 0) {
+      console.log("No flow specs installed.");
+      return;
+    }
+
+    console.log("Installed flow specs:");
+    for (const flow of flows) {
+      console.log(`  ${flow.name}`);
+    }
+  });
+
+flowCmd
+  .command("add")
+  .description("Add a new flow spec from a directory")
+  .argument("<path>", "Path to the flow spec directory to install")
+  .action((srcPath: string) => {
+    if (!existsSync(srcPath)) {
+      console.error(`Source directory not found: ${srcPath}`);
+      process.exit(1);
+    }
+
+    const name = basename(srcPath);
+    const specDir = getSpecDir();
+    mkdirSync(specDir, { recursive: true });
+
+    const destDir = join(specDir, name);
+    if (existsSync(destDir)) {
+      console.error(`Flow spec '${name}' already installed at ${destDir}`);
+      process.exit(1);
+    }
+
+    cpSync(srcPath, destDir, { recursive: true });
+    console.log(`Installed flow spec: ${name}`);
+    console.log(`  Location: ${destDir}`);
   });
 
 program.parse();

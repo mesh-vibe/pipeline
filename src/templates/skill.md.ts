@@ -52,8 +52,9 @@ pipeline template [--type <type>]
 
 ## Data Location
 
-- Active projects: ~/mesh-vibe/pipeline/active/
-- Archived projects: ~/mesh-vibe/pipeline/archive/
+- Active projects: ~/mesh-vibe/data/vibe-flow/active/
+- Archived projects: ~/mesh-vibe/data/vibe-flow/archive/
+- Flow specs: ~/mesh-vibe/data/vibe-flow-spec/
 - Each project has: project.md, design.md, use-cases.md, cli-spec.md, acceptance-criteria.md, review-notes.md, discussion.md, defects/, test-results/, final-review.md
 
 ## Phase Flow

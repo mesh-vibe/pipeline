@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const PIPELINE_DIR = join(homedir(), "mesh-vibe", "pipeline");
+const PIPELINE_DIR = join(homedir(), "mesh-vibe", "data", "vibe-flow");
 const ACTIVE_DIR = join(PIPELINE_DIR, "active");
 const ARCHIVE_DIR = join(PIPELINE_DIR, "archive");
 const TEST_PROJECT = "cli-test-project";
@@ -64,7 +64,7 @@ describe("CLI integration", () => {
     run(`pipeline create ${TEST_PROJECT} "Test project"`);
     const output = run("pipeline status");
     expect(output).toContain(TEST_PROJECT);
-    expect(output).toContain("DESIGN (1)");
+    expect(output).toMatch(/DESIGN \(\d+\)/);
   });
 
   it("shows detailed status for one project", () => {

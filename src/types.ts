@@ -19,6 +19,7 @@ export interface GateSection {
 export interface ProjectFrontmatter {
   name: string;
   description: string;
+  flow: string;
   "project-type": ProjectType;
   phase: Phase | "cancelled";
   priority: number;

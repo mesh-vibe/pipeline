@@ -42,6 +42,7 @@ function toFrontmatter(fm: Record<string, string>): ProjectFrontmatter {
   return {
     name: fm["name"] || "",
     description: fm["description"] || "",
+    flow: fm["flow"] || "sdlc",
     "project-type": (fm["project-type"] || "cli") as ProjectType,
     phase: (fm["phase"] || "design") as Phase | "cancelled",
     priority: parseInt(fm["priority"] || "3", 10),
