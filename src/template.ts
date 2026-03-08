@@ -1,4 +1,5 @@
-import type { ProjectType } from "./types.js";
+import type { FlowTemplate, FlowGate } from "./flow-types.js";
+import { resolveGates } from "./flow.js";
 import { timestamp } from "./project.js";
 
 function titleCase(name: string): string {
@@ -8,7 +9,22 @@ function titleCase(name: string): string {
     .join(" ");
 }
 
-function getTestGates(type: ProjectType): string {
+function phaseToSectionName(phase: string): string {
+  return phase
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function renderGates(gates: FlowGate[], checked: boolean = false): string {
+  return gates
+    .map((g) => `- [${checked ? "x" : " "}] ${g.label}`)
+    .join("\n");
+}
+
+// --- Legacy hardcoded gates (backward compat when no template available) ---
+
+function getLegacyTestGates(type: string): string {
   switch (type) {
     case "cli":
       return `### Test
@@ -32,13 +48,89 @@ function getTestGates(type: ProjectType): string {
 - [ ] Task runs without error
 - [ ] Output matches expected format
 - [ ] Timeout is respected`;
+    default:
+      return `### Test
+- [ ] Tests pass`;
   }
 }
+
+// --- Template-driven project generation ---
+
+export function generateProjectMdFromTemplate(
+  name: string,
+  description: string,
+  type: string,
+  priority: number,
+  date: string,
+  template: FlowTemplate,
+  startAtPhase?: string,
+  flowVersion: number = 1,
+): string {
+  const startIdx = startAtPhase
+    ? template.phases.findIndex((p) => p.name === startAtPhase)
+    : 0;
+  const startPhase = startIdx >= 0 ? template.phases[startIdx].name : template.phases[0].name;
+
+  let frontmatter = `---
+name: ${name}
+description: ${description}
+flow: ${template.name}
+flow-version: ${flowVersion}
+project-type: ${type}
+phase: ${startPhase}
+priority: ${priority}
+created: ${date}
+updated: ${timestamp()}
+approved-at:
+stuck-threshold-minutes: 120
+cancelled: false
+cancelled-reason:
+cancelled-at:
+cancelled-from:
+---`;
+
+  let gatesSections = "";
+  for (let i = 0; i < template.phases.length; i++) {
+    const phase = template.phases[i];
+    const gates = resolveGates(phase, type);
+    const sectionName = phaseToSectionName(phase.name);
+
+    if (startAtPhase && i < startIdx) {
+      // Mark skipped phases as N/A
+      gatesSections += `\n### ${sectionName}\n`;
+      gatesSections += gates.map((g) => `- [x] ${g.label} (N/A — skipped)`).join("\n");
+      gatesSections += "\n";
+    } else {
+      gatesSections += `\n### ${sectionName}\n`;
+      gatesSections += renderGates(gates);
+      gatesSections += "\n";
+    }
+  }
+
+  const historyEntry = startAtPhase
+    ? `- ${date} — Entered ${startPhase} phase (start-at)`
+    : `- ${date} — Entered ${startPhase} phase`;
+
+  return `${frontmatter}
+
+# ${titleCase(name)}
+
+${description}
+
+## Gates
+${gatesSections}
+## Phase History
+
+${historyEntry}
+`;
+}
+
+// --- Legacy project generation (no template) ---
 
 export function generateProjectMd(
   name: string,
   description: string,
-  type: ProjectType,
+  type: string,
   priority: number,
   date: string,
   flow: string = "sdlc",
@@ -47,6 +139,7 @@ export function generateProjectMd(
 name: ${name}
 description: ${description}
 flow: ${flow}
+flow-version: 1
 project-type: ${type}
 phase: design
 priority: ${priority}
@@ -85,7 +178,7 @@ ${description}
 - [ ] Coverage target met
 - [ ] Standards-bot passes (~/IdeaProjects/mesh-vibe/mesh-vibe/README.md)
 
-${getTestGates(type)}
+${getLegacyTestGates(type)}
 
 ### Final Review
 - [ ] All artifacts present and consistent
@@ -102,7 +195,7 @@ ${getTestGates(type)}
 export function generateBugfixProjectMd(
   name: string,
   description: string,
-  type: ProjectType,
+  type: string,
   priority: number,
   date: string,
   flow: string = "sdlc",
@@ -111,6 +204,7 @@ export function generateBugfixProjectMd(
 name: ${name}
 description: ${description}
 flow: ${flow}
+flow-version: 1
 project-type: ${type}
 phase: implement
 priority: ${priority}
@@ -136,7 +230,7 @@ ${description}
 - [ ] Coverage target met
 - [ ] Standards-bot passes (~/IdeaProjects/mesh-vibe/mesh-vibe/README.md)
 
-${getTestGates(type)}
+${getLegacyTestGates(type)}
 
 ### Final Review
 - [ ] All artifacts present and consistent

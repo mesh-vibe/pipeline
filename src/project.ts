@@ -9,13 +9,12 @@ import {
 } from "node:fs";
 import type {
   ProjectFrontmatter,
-  Phase,
   Gate,
   GateSection,
-  ProjectType,
   ParsedProject,
 } from "./types.js";
 import { PHASES } from "./types.js";
+import type { FlowTemplate } from "./flow-types.js";
 import {
   getActiveDir,
   getArchiveDir,
@@ -43,8 +42,9 @@ function toFrontmatter(fm: Record<string, string>): ProjectFrontmatter {
     name: fm["name"] || "",
     description: fm["description"] || "",
     flow: fm["flow"] || "sdlc",
-    "project-type": (fm["project-type"] || "cli") as ProjectType,
-    phase: (fm["phase"] || "design") as Phase | "cancelled",
+    "flow-version": parseInt(fm["flow-version"] || "1", 10),
+    "project-type": fm["project-type"] || "cli",
+    phase: fm["phase"] || "design",
     priority: parseInt(fm["priority"] || "3", 10),
     created: fm["created"] || "",
     updated: fm["updated"] || "",
@@ -236,13 +236,23 @@ export function appendPhaseHistory(name: string, entry: string): void {
 
 // --- Phase Navigation ---
 
-export function nextPhase(phase: Phase): Phase | null {
+export function nextPhase(phase: string, template?: FlowTemplate): string | null {
+  if (template) {
+    const idx = template.phases.findIndex((p) => p.name === phase);
+    if (idx === -1 || idx >= template.phases.length - 1) return null;
+    return template.phases[idx + 1].name;
+  }
   const idx = PHASES.indexOf(phase);
   if (idx === -1 || idx >= PHASES.length - 1) return null;
   return PHASES[idx + 1];
 }
 
-export function prevPhase(phase: Phase): Phase | null {
+export function prevPhase(phase: string, template?: FlowTemplate): string | null {
+  if (template) {
+    const idx = template.phases.findIndex((p) => p.name === phase);
+    if (idx <= 0) return null;
+    return template.phases[idx - 1].name;
+  }
   const idx = PHASES.indexOf(phase);
   if (idx <= 0) return null;
   return PHASES[idx - 1];
@@ -271,17 +281,31 @@ export function listDefects(
 
 export function checkArtifacts(
   projectDir: string,
+  template?: FlowTemplate,
 ): { name: string; exists: boolean }[] {
-  const artifacts = [
-    "project.md",
-    "design.md",
-    "use-cases.md",
-    "cli-spec.md",
-    "acceptance-criteria.md",
-    "review-notes.md",
-    "discussion.md",
-    "final-review.md",
-  ];
+  let artifacts: string[];
+  if (template) {
+    const templateArtifacts = new Set<string>(["project.md", "discussion.md"]);
+    for (const phase of template.phases) {
+      for (const gate of phase.gates) {
+        if (gate.artifacts) {
+          for (const a of gate.artifacts) templateArtifacts.add(a);
+        }
+      }
+    }
+    artifacts = [...templateArtifacts];
+  } else {
+    artifacts = [
+      "project.md",
+      "design.md",
+      "use-cases.md",
+      "cli-spec.md",
+      "acceptance-criteria.md",
+      "review-notes.md",
+      "discussion.md",
+      "final-review.md",
+    ];
+  }
   return artifacts.map((name) => ({
     name,
     exists: existsSync(`${projectDir}/${name}`),

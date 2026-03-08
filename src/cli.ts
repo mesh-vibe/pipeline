@@ -51,9 +51,21 @@ import {
   NAME_REGEX,
   timeAgo,
 } from "./project.js";
-import { generateProjectMd, generateBugfixProjectMd, generateDefectMd } from "./template.js";
+import { generateProjectMd, generateProjectMdFromTemplate, generateBugfixProjectMd, generateDefectMd } from "./template.js";
 import { installSkill } from "./templates/skill.md.js";
 import { installHeartbeatTask } from "./templates/heartbeat-task.md.js";
+import {
+  listInstalledTemplates,
+  loadInstalledTemplate,
+  validateTemplateFile,
+  installTemplate,
+  uninstallTemplate,
+  generateInitTemplate,
+  forkTemplate,
+  migrateProject,
+  resolveGates,
+  isEntryPoint,
+} from "./flow.js";
 
 const SPEC_README = `# vibe-flow-spec
 
@@ -341,6 +353,7 @@ program
   .option("--type <type>", "Project type: service, cli, library, heartbeat-task", "cli")
   .option("--priority <n>", "Priority 1-5, 1=highest", "3")
   .option("--flow <flow>", "Flow template to use", "sdlc")
+  .option("--start-at <phase>", "Start at a specific entry point phase")
   .action((name: string, description: string, opts) => {
     if (!NAME_REGEX.test(name)) {
       console.error(`Invalid project name '${name}'. Must be kebab-case.`);
@@ -375,8 +388,37 @@ program
       process.exit(1);
     }
 
+    // Try to load a YAML flow template
+    const template = loadInstalledTemplate(opts.flow);
+
+    if (opts.startAt && template) {
+      if (!isEntryPoint(opts.startAt, template)) {
+        const entryPoints = template.phases
+          .filter((p) => p.entryPoint)
+          .map((p) => p.name);
+        console.error(
+          `Phase '${opts.startAt}' is not an entry point. Valid entry points: ${entryPoints.join(", ")}`,
+        );
+        process.exit(2);
+      }
+    } else if (opts.startAt && !template) {
+      console.error(`--start-at requires a YAML flow template. Flow '${opts.flow}' has no template.`);
+      process.exit(2);
+    }
+
     mkdirSync(projectDir, { recursive: true });
-    const projectMd = generateProjectMd(name, description, type, priority, today(), opts.flow);
+
+    let projectMd: string;
+    let startPhase: string;
+    if (template) {
+      projectMd = generateProjectMdFromTemplate(
+        name, description, type, priority, today(), template, opts.startAt,
+      );
+      startPhase = opts.startAt || template.phases[0].name;
+    } else {
+      projectMd = generateProjectMd(name, description, type, priority, today(), opts.flow);
+      startPhase = "design";
+    }
     writeFileSync(getProjectFile(name), projectMd, "utf-8");
 
     writeFileSync(
@@ -388,7 +430,7 @@ program
     console.log(`Created project: ${name}`);
     console.log(`  Flow: ${opts.flow}`);
     console.log(`  Type: ${type}`);
-    console.log(`  Phase: design`);
+    console.log(`  Phase: ${startPhase}`);
     console.log(`  Priority: ${priority}`);
     console.log(`  Directory: ${projectDir}/`);
   });
@@ -1100,25 +1142,211 @@ const flowCmd = program
 
 flowCmd
   .command("list")
-  .description("List installed flow specs")
+  .description("List installed flow templates")
   .action(() => {
-    const specDir = getSpecDir();
-    if (!existsSync(specDir)) {
-      console.log("No flow specs installed. Run 'pipeline init' first.");
+    const templates = listInstalledTemplates();
+
+    if (templates.length === 0) {
+      console.log("No flow templates installed. Run 'pipeline init' first.");
       return;
     }
 
-    const entries = readdirSync(specDir, { withFileTypes: true });
-    const flows = entries.filter((e) => e.isDirectory());
+    console.log("Installed flow templates:");
+    for (const t of templates) {
+      const defaultTag = t.default ? " (default)" : "";
+      console.log(`  ${t.name.padEnd(20)} ${t.phases.length} phases${defaultTag}`);
+      console.log(`    ${t.description}`);
+    }
+  });
 
-    if (flows.length === 0) {
-      console.log("No flow specs installed.");
-      return;
+flowCmd
+  .command("show")
+  .description("Show details of a flow template")
+  .argument("<name>", "Flow template name")
+  .action((name: string) => {
+    const template = loadInstalledTemplate(name);
+    if (!template) {
+      console.error(`Flow template '${name}' not found`);
+      process.exit(1);
     }
 
-    console.log("Installed flow specs:");
-    for (const flow of flows) {
-      console.log(`  ${flow.name}`);
+    console.log(`${template.name}`);
+    console.log("=".repeat(template.name.length));
+    console.log(`Description: ${template.description}`);
+    console.log(`Default:     ${template.default}`);
+    console.log(`Phases:      ${template.phases.length}`);
+
+    for (const phase of template.phases) {
+      const flags: string[] = [];
+      if (phase.entryPoint) flags.push("entry-point");
+      if (phase.terminal) flags.push("terminal");
+      if (phase.autoArchive) flags.push("auto-archive");
+      if (phase.humanGate) flags.push("human-gate");
+      if (phase.skipIf) flags.push(`skip-if: ${phase.skipIf}`);
+      const flagStr = flags.length > 0 ? ` (${flags.join(", ")})` : "";
+
+      console.log(`\n  ${phase.name}${flagStr}`);
+      if (phase.worker) console.log(`    worker: ${phase.worker}`);
+      for (const gate of phase.gates) {
+        console.log(`    - ${gate.label}`);
+        if (gate.verify) console.log(`      verify: ${gate.verify}`);
+      }
+      if (phase.gateVariants) {
+        console.log(`    variants by: ${phase.gateVariants.by}`);
+        for (const [key, val] of Object.entries(phase.gateVariants)) {
+          if (key === "by") continue;
+          if (Array.isArray(val)) {
+            console.log(`      ${key}: ${val.length} extra gates`);
+          }
+        }
+      }
+    }
+
+    if (Object.keys(template.workers).length > 0) {
+      console.log("\nWorkers:");
+      for (const [name, config] of Object.entries(template.workers)) {
+        console.log(`  ${name}: ${config.prompt}`);
+      }
+    }
+
+    const features = template.features;
+    console.log("\nFeatures:");
+    console.log(`  discussion-log: ${features.discussionLog}`);
+    console.log(`  defect-cycle:   ${features.defectCycle}`);
+    console.log(`  bug-intake:     ${features.bugIntake}`);
+    console.log(`  cancellation:   ${features.cancellation}`);
+  });
+
+flowCmd
+  .command("install")
+  .description("Install a flow template from a YAML file")
+  .argument("<path>", "Path to the YAML template file")
+  .action((filePath: string) => {
+    if (!existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
+      process.exit(1);
+    }
+
+    const result = installTemplate(filePath);
+    if (!result.success) {
+      console.error(`Install failed: ${result.error}`);
+      process.exit(1);
+    }
+
+    console.log(`Installed flow template: ${result.template!.name}`);
+    console.log(`  Phases: ${result.template!.phases.length}`);
+    console.log(`  Default: ${result.template!.default}`);
+  });
+
+flowCmd
+  .command("uninstall")
+  .description("Uninstall a flow template")
+  .argument("<name>", "Flow template name")
+  .action((name: string) => {
+    const result = uninstallTemplate(name);
+    if (!result.success) {
+      console.error(result.error);
+      process.exit(1);
+    }
+
+    console.log(`Uninstalled flow template: ${name}`);
+  });
+
+flowCmd
+  .command("validate")
+  .description("Validate a flow template YAML file")
+  .argument("<path>", "Path to the YAML template file")
+  .action((filePath: string) => {
+    if (!existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
+      process.exit(1);
+    }
+
+    const result = validateTemplateFile(filePath);
+
+    if (result.valid) {
+      console.log(`Valid: ${result.phaseCount} phases, ${result.gateCount} gates`);
+    } else {
+      console.error("Validation failed:");
+      for (const err of result.errors) {
+        const loc = [err.phase, err.gate].filter(Boolean).join(" > ");
+        console.error(`  ERROR: ${err.message}${loc ? ` [${loc}]` : ""}`);
+      }
+      process.exit(1);
+    }
+
+    if (result.warnings.length > 0) {
+      for (const warn of result.warnings) {
+        console.log(`  WARNING: ${warn.message}`);
+      }
+    }
+  });
+
+flowCmd
+  .command("init")
+  .description("Scaffold a new flow template YAML file")
+  .argument("<name>", "Flow template name (kebab-case)")
+  .action((name: string) => {
+    const fileName = `${name}.yaml`;
+    if (existsSync(fileName)) {
+      console.error(`File '${fileName}' already exists`);
+      process.exit(1);
+    }
+
+    const content = generateInitTemplate(name);
+    writeFileSync(fileName, content, "utf-8");
+    console.log(`Created template scaffold: ${fileName}`);
+    console.log("Edit the file, then install with: pipeline flow install " + fileName);
+  });
+
+flowCmd
+  .command("fork")
+  .description("Copy an installed template for customization")
+  .argument("<source>", "Source template name")
+  .argument("<target>", "New template name")
+  .action((source: string, target: string) => {
+    const result = forkTemplate(source, target);
+    if (!result.success) {
+      console.error(result.error);
+      process.exit(1);
+    }
+
+    console.log(`Forked '${source}' as '${target}'`);
+    console.log(`  File: ${result.filePath}`);
+    console.log("Edit the file, then install with: pipeline flow install " + result.filePath);
+  });
+
+flowCmd
+  .command("migrate")
+  .description("Upgrade a project to the latest template version")
+  .argument("<project>", "Project name")
+  .action((projectName: string) => {
+    const proj = readProject(projectName);
+    if (!proj) {
+      console.error(`Project '${projectName}' not found`);
+      process.exit(1);
+    }
+
+    const flowName = proj.frontmatter.flow || "sdlc";
+    const template = loadInstalledTemplate(flowName);
+    if (!template) {
+      console.error(`Flow template '${flowName}' not found`);
+      process.exit(1);
+    }
+
+    const currentVersion = parseInt(String(proj.frontmatter["flow-version"] || "1"), 10);
+    const projectDir = getProjectDir(projectName);
+    const projectFile = getProjectFile(projectName);
+
+    const result = migrateProject(projectDir, projectFile, currentVersion, template);
+    if (!result.success) {
+      console.error(`Migration failed: ${result.error}`);
+      process.exit(1);
+    }
+
+    console.log(`Migrated: ${projectName}`);
+    for (const change of result.changes) {
+      console.log(`  ${change}`);
     }
   });
 

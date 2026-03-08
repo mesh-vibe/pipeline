@@ -1,10 +1,10 @@
-export type Phase = "design" | "review" | "implement" | "test" | "final-review";
+export type Phase = string;
 
-export type ProjectType = "cli" | "service" | "library" | "heartbeat-task";
+export type ProjectType = string;
 
-export const VALID_TYPES: ProjectType[] = ["cli", "service", "library", "heartbeat-task"];
+export const VALID_TYPES: string[] = ["cli", "service", "library", "heartbeat-task"];
 
-export const PHASES: Phase[] = ["design", "review", "implement", "test", "final-review"];
+export const PHASES: string[] = ["design", "review", "implement", "test", "final-review"];
 
 export interface Gate {
   label: string;
@@ -20,8 +20,9 @@ export interface ProjectFrontmatter {
   name: string;
   description: string;
   flow: string;
-  "project-type": ProjectType;
-  phase: Phase | "cancelled";
+  "flow-version": number;
+  "project-type": string;
+  phase: string;
   priority: number;
   created: string;
   updated: string;
