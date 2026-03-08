@@ -54,6 +54,8 @@ import {
 import { generateProjectMd, generateProjectMdFromTemplate, generateBugfixProjectMd, generateDefectMd } from "./template.js";
 import { installSkill } from "./templates/skill.md.js";
 import { installHeartbeatTask } from "./templates/heartbeat-task.md.js";
+import { SDLC_YAML } from "./templates/sdlc.yaml.js";
+import { RESEARCH_YAML } from "./templates/research.yaml.js";
 import {
   listInstalledTemplates,
   loadInstalledTemplate,
@@ -210,6 +212,18 @@ program
       } else {
         console.log("Warning: SDLC spec not found in research-bot. Run 'pipeline flow add' to install manually.");
       }
+    }
+
+    // Install YAML flow templates
+    const sdlcYamlPath = join(specDir, "sdlc.yaml");
+    if (!existsSync(sdlcYamlPath)) {
+      writeFileSync(sdlcYamlPath, SDLC_YAML, "utf-8");
+      console.log("Installed flow template: sdlc.yaml");
+    }
+    const researchYamlPath = join(specDir, "research.yaml");
+    if (!existsSync(researchYamlPath)) {
+      writeFileSync(researchYamlPath, RESEARCH_YAML, "utf-8");
+      console.log("Installed flow template: research.yaml");
     }
 
     // Write spec README if missing
