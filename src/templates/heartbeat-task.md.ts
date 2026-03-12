@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 const TASK_CONTENT = `---
 schedule: every beat
 timeout: 25m
-dir: ~/mesh-vibe/data/vibe-flow
+dir: ~/mesh-vibe/vibe-flow
 enabled: true
 claude:
   args: ["--dangerously-skip-permissions"]
@@ -48,8 +48,8 @@ When a project needs work, queue a prompt via \`prompt-queue add "<prompt>"\`.
 The prompt should tell the worker:
 - Which project and its current phase
 - What gates need to be checked off
-- Where the project files are: \`~/mesh-vibe/data/vibe-flow/active/<name>/\`
-- Which flow spec to reference: \`~/mesh-vibe/data/vibe-flow-spec/<flow>/\`
+- Where the project files are: \`~/mesh-vibe/vibe-flow/flows/<flow>/active/<name>/\`
+- Which flow spec to reference: \`~/mesh-vibe/vibe-flow/specs/<flow>/\`
 - To check gate boxes in project.md when criteria are met
 - To update the \`updated\` field in project.md frontmatter when done
 - To append decisions and notes to discussion.md

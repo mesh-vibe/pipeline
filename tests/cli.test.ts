@@ -4,9 +4,11 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const PIPELINE_DIR = join(homedir(), "mesh-vibe", "data", "vibe-flow");
-const ACTIVE_DIR = join(PIPELINE_DIR, "active");
-const ARCHIVE_DIR = join(PIPELINE_DIR, "archive");
+const PIPELINE_DIR = join(homedir(), "mesh-vibe", "vibe-flow");
+const FLOWS_DIR = join(PIPELINE_DIR, "flows");
+const DEFAULT_FLOW = "sdlc-point-release-v1-0";
+const ACTIVE_DIR = join(FLOWS_DIR, DEFAULT_FLOW, "active");
+const ARCHIVE_DIR = join(FLOWS_DIR, DEFAULT_FLOW, "archive");
 const TEST_PROJECT = "cli-test-project";
 
 function run(cmd: string): string {
@@ -14,16 +16,22 @@ function run(cmd: string): string {
 }
 
 function cleanup() {
-  const activeDir = join(ACTIVE_DIR, TEST_PROJECT);
-  const archiveDir = join(ARCHIVE_DIR, TEST_PROJECT);
-  if (existsSync(activeDir)) rmSync(activeDir, { recursive: true });
-  if (existsSync(archiveDir)) rmSync(archiveDir, { recursive: true });
+  // Clean from all flow directories
+  if (existsSync(FLOWS_DIR)) {
+    const flows = existsSync(FLOWS_DIR) ? require("fs").readdirSync(FLOWS_DIR) : [];
+    for (const flow of flows) {
+      const activeDir = join(FLOWS_DIR, flow, "active", TEST_PROJECT);
+      const archiveDir = join(FLOWS_DIR, flow, "archive", TEST_PROJECT);
+      if (existsSync(activeDir)) rmSync(activeDir, { recursive: true });
+      if (existsSync(archiveDir)) rmSync(archiveDir, { recursive: true });
+    }
+  }
 }
 
 describe("CLI integration", () => {
   beforeEach(() => {
     cleanup();
-    // Ensure pipeline is initialized
+    // Ensure pipeline is initialized with flow-based directory structure
     if (!existsSync(ACTIVE_DIR)) {
       run("pipeline init");
     }

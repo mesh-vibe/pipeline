@@ -24,8 +24,14 @@ import {
   getProjectDir,
   getArchivedProjectDir,
   getProjectFile,
-  getResearchBotDir,
   getPromptQueueProjectsDir,
+  getFlowsDir,
+  getFlowActiveDir,
+  getFlowArchiveDir,
+  getFlowProjectDir,
+  getFlowArchivedProjectDir,
+  findProjectDir,
+  findArchivedProjectDir,
 } from "./paths.js";
 import {
   readProject,
@@ -143,18 +149,23 @@ Runtime data for the vibe-flow pipeline. Managed by the \`pipeline\` CLI.
 
 \`\`\`
 vibe-flow/
-  active/          # Projects currently in progress
-  archive/         # Completed or cancelled projects
-  README.md        # This file
+  flows/
+    sdlc-point-release-v1-0/
+      active/        # SDLC projects in progress
+      archive/       # Completed or cancelled SDLC projects
+    research/
+      active/        # Research projects in progress
+      archive/       # Completed or cancelled research projects
+  README.md          # This file
 \`\`\`
 
-Each project is a directory under \`active/\` containing \`project.md\` (frontmatter +
+Each project is a directory under its flow's \`active/\` dir containing \`project.md\` (frontmatter +
 gates) and artifacts produced during its lifecycle (design docs, test results, etc.).
 
 ## Flow Specs
 
-Flow specifications live in the sibling \`vibe-flow-spec/\` directory. See
-\`../vibe-flow-spec/README.md\` for how to create and install new flows.
+Flow specifications live in the \`specs/\` directory. See
+\`specs/README.md\` for how to create and install new flows.
 
 ## Commands
 
@@ -184,16 +195,35 @@ program
   .option("--dry-run", "Show what --migrate would do without doing it")
   .action((opts) => {
     const pipelineDir = getPipelineDir();
-    const activeDir = getActiveDir();
-    const archiveDir = getArchiveDir();
+    const flowsDir = getFlowsDir();
 
-    if (!existsSync(activeDir)) {
-      mkdirSync(activeDir, { recursive: true });
-      console.log(`Created ${activeDir}`);
+    // Create flows directory structure
+    if (!existsSync(flowsDir)) {
+      mkdirSync(flowsDir, { recursive: true });
+      console.log(`Created ${flowsDir}`);
     }
-    if (!existsSync(archiveDir)) {
-      mkdirSync(archiveDir, { recursive: true });
-      console.log(`Created ${archiveDir}`);
+
+    // Create default flow directories
+    const defaultFlowActive = getFlowActiveDir("sdlc-point-release-v1-0");
+    const defaultFlowArchive = getFlowArchiveDir("sdlc-point-release-v1-0");
+    if (!existsSync(defaultFlowActive)) {
+      mkdirSync(defaultFlowActive, { recursive: true });
+      console.log(`Created ${defaultFlowActive}`);
+    }
+    if (!existsSync(defaultFlowArchive)) {
+      mkdirSync(defaultFlowArchive, { recursive: true });
+      console.log(`Created ${defaultFlowArchive}`);
+    }
+
+    const researchFlowActive = getFlowActiveDir("research");
+    const researchFlowArchive = getFlowArchiveDir("research");
+    if (!existsSync(researchFlowActive)) {
+      mkdirSync(researchFlowActive, { recursive: true });
+      console.log(`Created ${researchFlowActive}`);
+    }
+    if (!existsSync(researchFlowArchive)) {
+      mkdirSync(researchFlowArchive, { recursive: true });
+      console.log(`Created ${researchFlowArchive}`);
     }
 
     const specDir = getSpecDir();
@@ -202,23 +232,11 @@ program
       console.log(`Created ${specDir}`);
     }
 
-    // Install SDLC flow spec
-    const sdlcSpecDir = getSpecFlowDir("SDLC-Point-Release-v1.0");
-    if (!existsSync(sdlcSpecDir)) {
-      const srcDir = join(getResearchBotDir(), "SDLC-Point-Release-v1.0");
-      if (existsSync(srcDir)) {
-        cpSync(srcDir, sdlcSpecDir, { recursive: true });
-        console.log(`Installed flow: SDLC-Point-Release-v1.0`);
-      } else {
-        console.log("Warning: SDLC spec not found in research-bot. Run 'pipeline flow add' to install manually.");
-      }
-    }
-
     // Install YAML flow templates
-    const sdlcYamlPath = join(specDir, "sdlc.yaml");
+    const sdlcYamlPath = join(specDir, "sdlc-point-release-v1-0.yaml");
     if (!existsSync(sdlcYamlPath)) {
       writeFileSync(sdlcYamlPath, SDLC_YAML, "utf-8");
-      console.log("Installed flow template: sdlc.yaml");
+      console.log("Installed flow template: sdlc-point-release-v1-0.yaml");
     }
     const researchYamlPath = join(specDir, "research.yaml");
     if (!existsSync(researchYamlPath)) {
@@ -257,101 +275,6 @@ program
       console.log("Installed heartbeat task at ~/mesh-vibe/heartbeat/vibe-flow.md");
     }
 
-    if (opts.migrate) {
-      console.log("\nMigrating existing items...");
-      const researchDir = getResearchBotDir();
-      const pqProjectsDir = getPromptQueueProjectsDir();
-      let activeCount = 0;
-      let archiveCount = 0;
-
-      // Migrate design docs from research-bot
-      if (existsSync(researchDir)) {
-        const files = readdirSync(researchDir).filter(
-          (f) =>
-            f.endsWith(".md") &&
-            !f.startsWith("SDLC-") &&
-            !f.startsWith("README"),
-        );
-        for (const file of files) {
-          const name = file.replace(/\.md$/, "");
-          const destDir = join(activeDir, name);
-          const srcPath = join(researchDir, file);
-
-          if (existsSync(destDir)) continue;
-
-          if (opts.dryRun) {
-            console.log(
-              `  [DRY RUN] MOVE data/research-bot/${file} → pipeline/active/${name}/design.md`,
-            );
-          } else {
-            mkdirSync(destDir, { recursive: true });
-            renameSync(srcPath, join(destDir, "design.md"));
-            const projectMd = generateProjectMd(
-              name,
-              `Migrated from research-bot/${file}`,
-              "cli",
-              3,
-              today(),
-            );
-            writeFileSync(join(destDir, "project.md"), projectMd, "utf-8");
-            console.log(
-              `  MOVE data/research-bot/${file} → pipeline/active/${name}/design.md`,
-            );
-            activeCount++;
-          }
-        }
-      }
-
-      // Migrate completed projects from prompt-queue
-      if (existsSync(pqProjectsDir)) {
-        const files = readdirSync(pqProjectsDir).filter((f) =>
-          f.endsWith(".md"),
-        );
-        const projectGroups = new Map<string, string[]>();
-        for (const file of files) {
-          const match = file.match(/^(.+?)(?:-(?:be|fe|api|web|cli))?\.md$/);
-          const projectName = match ? match[1] : file.replace(/\.md$/, "");
-          if (!projectGroups.has(projectName)) {
-            projectGroups.set(projectName, []);
-          }
-          projectGroups.get(projectName)!.push(file);
-        }
-
-        for (const [projectName, projectFiles] of projectGroups) {
-          const destDir = join(archiveDir, projectName);
-          if (existsSync(destDir)) continue;
-
-          if (opts.dryRun) {
-            for (const f of projectFiles) {
-              console.log(
-                `  [DRY RUN] MOVE data/prompt-queue/projects/${f} → pipeline/archive/${projectName}/${f}`,
-              );
-            }
-          } else {
-            mkdirSync(destDir, { recursive: true });
-            for (const f of projectFiles) {
-              renameSync(
-                join(pqProjectsDir, f),
-                join(destDir, f),
-              );
-              console.log(
-                `  MOVE data/prompt-queue/projects/${f} → pipeline/archive/${projectName}/${f}`,
-              );
-            }
-            archiveCount++;
-          }
-        }
-      }
-
-      if (opts.dryRun) {
-        console.log("No changes made.");
-      } else {
-        console.log(
-          `Migration complete. ${activeCount} active, ${archiveCount} archived.`,
-        );
-      }
-    }
-
     if (!opts.migrate) {
       console.log("Pipeline initialized.");
     }
@@ -366,7 +289,7 @@ program
   .argument("<description>", "One-line project description")
   .option("--type <type>", "Project type: service, cli, library, heartbeat-task", "cli")
   .option("--priority <n>", "Priority 1-5, 1=highest", "3")
-  .option("--flow <flow>", "Flow template to use", "sdlc")
+  .option("--flow <flow>", "Flow template to use")
   .option("--start-at <phase>", "Start at a specific entry point phase")
   .action((name: string, description: string, opts) => {
     if (!NAME_REGEX.test(name)) {
@@ -388,22 +311,28 @@ program
       process.exit(2);
     }
 
-    const projectDir = getProjectDir(name);
-    if (existsSync(projectDir)) {
+    // Check for duplicates across all flows
+    if (findProjectDir(name)) {
       console.error(`Project '${name}' already exists in active pipeline`);
       process.exit(1);
     }
 
-    const archivedDir = getArchivedProjectDir(name);
-    if (existsSync(archivedDir)) {
+    if (findArchivedProjectDir(name)) {
       console.error(
         `Project '${name}' exists in archive. Use --reactivate to restore it.`,
       );
       process.exit(1);
     }
 
+    // Determine flow: explicit flag > default template
+    let flowName = opts.flow;
+    if (!flowName) {
+      const defaultTemplate = listInstalledTemplates().find((t) => t.default);
+      flowName = defaultTemplate ? defaultTemplate.name : "sdlc-point-release-v1-0";
+    }
+
     // Try to load a YAML flow template
-    const template = loadInstalledTemplate(opts.flow);
+    const template = loadInstalledTemplate(flowName);
 
     if (opts.startAt && template) {
       if (!isEntryPoint(opts.startAt, template)) {
@@ -416,10 +345,13 @@ program
         process.exit(2);
       }
     } else if (opts.startAt && !template) {
-      console.error(`--start-at requires a YAML flow template. Flow '${opts.flow}' has no template.`);
+      console.error(`--start-at requires a YAML flow template. Flow '${flowName}' has no template.`);
       process.exit(2);
     }
 
+    // Use flow-based directory structure
+    const flowSlug = flowName.toLowerCase().replace(/\./g, "-");
+    const projectDir = getFlowProjectDir(flowSlug, name);
     mkdirSync(projectDir, { recursive: true });
 
     let projectMd: string;
@@ -430,10 +362,10 @@ program
       );
       startPhase = opts.startAt || template.phases[0].name;
     } else {
-      projectMd = generateProjectMd(name, description, type, priority, today(), opts.flow);
+      projectMd = generateProjectMd(name, description, type, priority, today(), flowName);
       startPhase = "design";
     }
-    writeFileSync(getProjectFile(name), projectMd, "utf-8");
+    writeFileSync(join(projectDir, "project.md"), projectMd, "utf-8");
 
     writeFileSync(
       join(projectDir, "discussion.md"),
@@ -442,7 +374,7 @@ program
     );
 
     console.log(`Created project: ${name}`);
-    console.log(`  Flow: ${opts.flow}`);
+    console.log(`  Flow: ${flowName}`);
     console.log(`  Type: ${type}`);
     console.log(`  Phase: ${startPhase}`);
     console.log(`  Priority: ${priority}`);
@@ -645,7 +577,7 @@ program
         const fm = proj.frontmatter;
         const { checked, total } = countGates(proj.rawContent, fm.phase as string);
         console.log(
-          `${fm.name.padEnd(25)} ${(fm.phase as string).padEnd(15)} ${checked}/${total}  pri:${fm.priority}`,
+          `${fm.name.padEnd(25)} ${(fm.phase as string).padEnd(15)} ${fm.flow.padEnd(28)} ${checked}/${total}  pri:${fm.priority}`,
         );
       }
     }
@@ -850,7 +782,11 @@ program
         }
 
         const projectName = slugify(desc);
-        const projectDir = getProjectDir(projectName);
+        // Use default flow template for bugfix projects
+        const defaultTemplate = listInstalledTemplates().find((t) => t.default);
+        const bugFlowName = defaultTemplate ? defaultTemplate.name : "sdlc-point-release-v1-0";
+        const bugFlowSlug = bugFlowName.toLowerCase().replace(/\./g, "-");
+        const projectDir = getFlowProjectDir(bugFlowSlug, projectName);
         mkdirSync(projectDir, { recursive: true });
         mkdirSync(join(projectDir, "defects"), { recursive: true });
 
@@ -1104,15 +1040,19 @@ program
     const description = words.join(" ");
     const name = slugify(description);
 
-    if (existsSync(getProjectDir(name))) {
+    if (findProjectDir(name)) {
       console.error(`Project '${name}' already exists`);
       process.exit(1);
     }
 
-    const projectDir = getProjectDir(name);
+    // Use default flow template
+    const defaultTemplate = listInstalledTemplates().find((t) => t.default);
+    const flowName = defaultTemplate ? defaultTemplate.name : "sdlc-point-release-v1-0";
+    const flowSlug = flowName.toLowerCase().replace(/\./g, "-");
+    const projectDir = getFlowProjectDir(flowSlug, name);
     mkdirSync(projectDir, { recursive: true });
-    const projectMd = generateProjectMd(name, description, "cli", 3, today(), "sdlc");
-    writeFileSync(getProjectFile(name), projectMd, "utf-8");
+    const projectMd = generateProjectMd(name, description, "cli", 3, today(), flowName);
+    writeFileSync(join(projectDir, "project.md"), projectMd, "utf-8");
     writeFileSync(
       join(projectDir, "discussion.md"),
       "# Discussion Log\n",

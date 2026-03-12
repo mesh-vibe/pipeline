@@ -24,5 +24,13 @@ export {
   getProjectDir,
   getArchivedProjectDir,
   getProjectFile,
+  getFlowsDir,
+  getFlowDir,
+  getFlowActiveDir,
+  getFlowArchiveDir,
+  getFlowProjectDir,
+  getFlowArchivedProjectDir,
+  findProjectDir,
+  findArchivedProjectDir,
 } from "./paths.js";
 export { installSkill } from "./templates/skill.md.js";

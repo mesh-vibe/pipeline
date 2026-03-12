@@ -643,16 +643,16 @@ describe("listInstalledTemplates", () => {
     const templates = listInstalledTemplates();
     expect(templates.length).toBeGreaterThanOrEqual(2);
     const names = templates.map((t) => t.name);
-    expect(names).toContain("sdlc");
+    expect(names).toContain("sdlc-point-release-v1-0");
     expect(names).toContain("research");
   });
 });
 
 describe("loadInstalledTemplate", () => {
-  it("loads sdlc template by name", () => {
-    const template = loadInstalledTemplate("sdlc");
+  it("loads sdlc-point-release-v1-0 template by name", () => {
+    const template = loadInstalledTemplate("sdlc-point-release-v1-0");
     expect(template).not.toBeNull();
-    expect(template!.name).toBe("sdlc");
+    expect(template!.name).toBe("sdlc-point-release-v1-0");
     expect(template!.default).toBe(true);
   });
 
@@ -679,14 +679,14 @@ describe("CLI flow commands", () => {
 
   it("flow list shows installed templates", () => {
     const output = run("pipeline flow list");
-    expect(output).toContain("sdlc");
+    expect(output).toContain("sdlc-point-release-v1-0");
     expect(output).toContain("research");
     expect(output).toContain("(default)");
   });
 
   it("flow show displays template details", () => {
-    const output = run("pipeline flow show sdlc");
-    expect(output).toContain("sdlc");
+    const output = run("pipeline flow show sdlc-point-release-v1-0");
+    expect(output).toContain("sdlc-point-release-v1-0");
     expect(output).toContain("design");
     expect(output).toContain("review");
     expect(output).toContain("implement");
@@ -704,7 +704,7 @@ describe("CLI flow commands", () => {
   });
 
   it("flow validate accepts valid template", () => {
-    const output = run(`pipeline flow validate ~/mesh-vibe/data/vibe-flow-spec/sdlc.yaml`);
+    const output = run(`pipeline flow validate ~/mesh-vibe/vibe-flow/specs/sdlc-point-release-v1-0.yaml`);
     expect(output).toContain("Valid");
     expect(output).toContain("phases");
   });

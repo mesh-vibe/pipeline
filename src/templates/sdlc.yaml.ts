@@ -1,4 +1,4 @@
-export const SDLC_YAML = `name: sdlc
+export const SDLC_YAML = `name: sdlc-point-release-v1-0
 description: Software development lifecycle — design, review, implement, test, final review
 default: true
 

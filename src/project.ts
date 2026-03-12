@@ -7,6 +7,7 @@ import {
   renameSync,
   cpSync,
 } from "node:fs";
+import { join } from "node:path";
 import type {
   ProjectFrontmatter,
   Gate,
@@ -22,6 +23,11 @@ import {
   getArchivedProjectDir,
   getProjectFile,
   getArchivedProjectFile,
+  getFlowsDir,
+  getFlowActiveDir,
+  getFlowArchiveDir,
+  findProjectDir,
+  findArchivedProjectDir,
 } from "./paths.js";
 
 // --- Frontmatter Parsing ---
@@ -41,7 +47,7 @@ function toFrontmatter(fm: Record<string, string>): ProjectFrontmatter {
   return {
     name: fm["name"] || "",
     description: fm["description"] || "",
-    flow: fm["flow"] || "sdlc",
+    flow: fm["flow"] || "sdlc-point-release-v1-0",
     "flow-version": parseInt(fm["flow-version"] || "1", 10),
     "project-type": fm["project-type"] || "cli",
     phase: fm["phase"] || "design",
@@ -79,14 +85,20 @@ export function readArchivedProject(name: string): ParsedProject | null {
 }
 
 export function listActiveProjects(): ParsedProject[] {
-  const dir = getActiveDir();
-  if (!existsSync(dir)) return [];
-  const entries = readdirSync(dir, { withFileTypes: true });
+  const flowsDir = getFlowsDir();
+  if (!existsSync(flowsDir)) return [];
   const projects: ParsedProject[] = [];
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const proj = readProject(entry.name);
-      if (proj) projects.push(proj);
+  const flows = readdirSync(flowsDir, { withFileTypes: true });
+  for (const flow of flows) {
+    if (!flow.isDirectory()) continue;
+    const activeDir = getFlowActiveDir(flow.name);
+    if (!existsSync(activeDir)) continue;
+    const entries = readdirSync(activeDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const proj = readProject(entry.name);
+        if (proj) projects.push(proj);
+      }
     }
   }
   return projects.sort(
@@ -95,14 +107,20 @@ export function listActiveProjects(): ParsedProject[] {
 }
 
 export function listArchivedProjects(): ParsedProject[] {
-  const dir = getArchiveDir();
-  if (!existsSync(dir)) return [];
-  const entries = readdirSync(dir, { withFileTypes: true });
+  const flowsDir = getFlowsDir();
+  if (!existsSync(flowsDir)) return [];
   const projects: ParsedProject[] = [];
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const proj = readArchivedProject(entry.name);
-      if (proj) projects.push(proj);
+  const flows = readdirSync(flowsDir, { withFileTypes: true });
+  for (const flow of flows) {
+    if (!flow.isDirectory()) continue;
+    const archiveDir = getFlowArchiveDir(flow.name);
+    if (!existsSync(archiveDir)) continue;
+    const entries = readdirSync(archiveDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const proj = readArchivedProject(entry.name);
+        if (proj) projects.push(proj);
+      }
     }
   }
   return projects;
@@ -316,16 +334,42 @@ export function checkArtifacts(
 
 export function moveToArchive(name: string): void {
   const src = getProjectDir(name);
-  const dest = getArchivedProjectDir(name);
-  mkdirSync(getArchiveDir(), { recursive: true });
+  // Read the project to determine its flow
+  const projectFile = join(src, "project.md");
+  const flow = _readFlowFromFile(projectFile);
+  const flowSlug = _flowToSlug(flow);
+  const archiveDir = getFlowArchiveDir(flowSlug);
+  mkdirSync(archiveDir, { recursive: true });
+  const dest = join(archiveDir, name);
   renameSync(src, dest);
 }
 
 export function moveFromArchive(name: string): void {
-  const src = getArchivedProjectDir(name);
-  const dest = getProjectDir(name);
-  mkdirSync(getActiveDir(), { recursive: true });
+  const src = findArchivedProjectDir(name);
+  if (!src) return;
+  // Read the project to determine its flow
+  const projectFile = join(src, "project.md");
+  const flow = _readFlowFromFile(projectFile);
+  const flowSlug = _flowToSlug(flow);
+  const activeDir = getFlowActiveDir(flowSlug);
+  mkdirSync(activeDir, { recursive: true });
+  const dest = join(activeDir, name);
   renameSync(src, dest);
+}
+
+function _readFlowFromFile(projectFile: string): string {
+  try {
+    const content = readFileSync(projectFile, "utf-8");
+    const match = content.match(/^flow:\s*(.+)$/m);
+    return match ? match[1].trim() : "sdlc-point-release-v1-0";
+  } catch {
+    return "sdlc-point-release-v1-0";
+  }
+}
+
+function _flowToSlug(flow: string): string {
+  // Convert flow name to directory-safe slug (lowercase, dots to dashes)
+  return flow.toLowerCase().replace(/\./g, "-");
 }
 
 // --- Utilities ---
