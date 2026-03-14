@@ -34,3 +34,5 @@ export {
   findArchivedProjectDir,
 } from "./paths.js";
 export { installSkill } from "./templates/skill.md.js";
+export { runSupervise } from "./supervise-runner.js";
+export type { SuperviseAction, SuperviseResult, SuperviseOptions } from "./supervise.js";

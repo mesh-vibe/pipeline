@@ -74,6 +74,7 @@ import {
   resolveGates,
   isEntryPoint,
 } from "./flow.js";
+import { runSupervise } from "./supervise-runner.js";
 
 const SPEC_README = `# vibe-flow-spec
 
@@ -1327,6 +1328,37 @@ flowCmd
     cpSync(srcPath, destDir, { recursive: true });
     console.log(`Installed flow spec: ${name}`);
     console.log(`  Location: ${destDir}`);
+  });
+
+// --- supervise ---
+
+program
+  .command("supervise")
+  .description("Supervise active projects — advance, queue work, archive")
+  .option("--dry-run", "Show what would happen without taking action", false)
+  .option("--limit <n>", "Max projects to queue work for per run", "3")
+  .option("--json", "Output structured JSON summary", false)
+  .option("--verbose", "Show per-project decision details", false)
+  .option("--prompt-queue", "Also supervise prompt-queue projects", false)
+  .option("--no-notify", "Skip sending notifications")
+  .option("--no-queue", "Skip queuing work (only advance/archive)")
+  .action((opts) => {
+    const limit = parseInt(opts.limit, 10);
+    if (isNaN(limit) || limit < 1) {
+      console.error("--limit must be a positive integer");
+      process.exit(2);
+    }
+    runSupervise(
+      {
+        limit,
+        promptQueue: opts.promptQueue,
+        notify: opts.notify !== false,
+        queue: opts.queue !== false,
+      },
+      opts.dryRun,
+      opts.verbose,
+      opts.json,
+    );
   });
 
 program.parse();
