@@ -168,6 +168,11 @@ function executeAction(action: SuperviseAction, dryRun: boolean): void {
         action.project,
         `${ts} — Phase: ${action.from} → ${action.to} (auto-advanced by supervisor)`,
       );
+      emitEvent("pipeline.project.advanced", {
+        project: action.project,
+        from: action.from,
+        to: action.to,
+      });
       break;
     }
     case "archive": {
@@ -312,6 +317,20 @@ function formatVerboseAction(action: SuperviseAction, state?: ProjectState | PqP
   return base;
 }
 
+// --- Eventlog emission (fire-and-forget) ---
+
+function emitEvent(event: string, data: Record<string, unknown>): void {
+  try {
+    const json = JSON.stringify(data);
+    execSync(
+      `eventlog emit "${event}" --source pipeline --data '${json}'`,
+      { stdio: "pipe", timeout: 5000 },
+    );
+  } catch {
+    // fire-and-forget — never break pipeline for event emission
+  }
+}
+
 // --- Main runner ---
 
 export function runSupervise(
@@ -323,6 +342,8 @@ export function runSupervise(
   const now = options.now ?? Date.now();
   const actions: SuperviseAction[] = [];
   let queuedCount = 0;
+
+  emitEvent("pipeline.supervise.started", { dryRun, limit: options.limit });
 
   // --- Pipeline projects ---
   let projects: ParsedProject[];
@@ -461,6 +482,15 @@ export function runSupervise(
       console.log("\n[DRY RUN] No actions taken.");
     }
   }
+
+  emitEvent("pipeline.supervise.completed", {
+    projects: result.projects,
+    advanced: result.advanced,
+    queued: result.queued,
+    archived: result.archived,
+    skipped: result.skippedActive + result.skippedLimit,
+    errors: result.errors.length,
+  });
 
   return result;
 }

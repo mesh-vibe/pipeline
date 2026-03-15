@@ -972,6 +972,16 @@ program
 
     moveToArchive(name);
 
+    try {
+      const data = JSON.stringify({ project: name, reason, from: phase });
+      execSync(
+        `eventlog emit "pipeline.project.cancelled" --source pipeline --data '${data}'`,
+        { stdio: "pipe", timeout: 5000 },
+      );
+    } catch {
+      // fire-and-forget — never break pipeline for event emission
+    }
+
     console.log(`Cancelled: ${name}`);
     console.log(`Reason: "${reason}"`);
     console.log(`Cancelled from: ${phase} phase`);
