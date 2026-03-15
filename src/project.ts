@@ -6,6 +6,7 @@ import {
   mkdirSync,
   renameSync,
   cpSync,
+  unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -63,6 +64,8 @@ function toFrontmatter(fm: Record<string, string>): ProjectFrontmatter {
     "cancelled-reason": fm["cancelled-reason"] || "",
     "cancelled-at": fm["cancelled-at"] || "",
     "cancelled-from": fm["cancelled-from"] || "",
+    "needs-interactive": fm["needs-interactive"] === "true",
+    "needs-interactive-reason": fm["needs-interactive-reason"] || "",
   };
 }
 
@@ -250,6 +253,85 @@ export function appendPhaseHistory(name: string, entry: string): void {
     `$1- ${entry}\n$2`,
   );
   writeFileSync(proj.filePath, content, "utf-8");
+}
+
+// --- Needs Interactive ---
+
+export function isNeedsInteractive(fm: ProjectFrontmatter): boolean {
+  return fm["needs-interactive"] === true;
+}
+
+export function setNeedsInteractive(projectDir: string, reason: string): void {
+  const projectFile = join(projectDir, "project.md");
+  if (!existsSync(projectFile)) return;
+  const content = readFileSync(projectFile, "utf-8");
+  const fm = parseFrontmatter(content);
+  const phase = fm["phase"] || "unknown";
+  const ts = timestamp();
+
+  // Add fields if missing, or update existing
+  let updated = content;
+  const fmMatch = updated.match(/^(---\n)([\s\S]*?)(\n---)/);
+  if (!fmMatch) return;
+  let fmText = fmMatch[2];
+
+  if (/^needs-interactive:/m.test(fmText)) {
+    fmText = fmText.replace(/^(needs-interactive:).*$/m, `$1 true`);
+  } else {
+    fmText += `\nneeds-interactive: true`;
+  }
+
+  if (/^needs-interactive-reason:/m.test(fmText)) {
+    fmText = fmText.replace(/^(needs-interactive-reason:).*$/m, `$1 ${reason}`);
+  } else {
+    fmText += `\nneeds-interactive-reason: ${reason}`;
+  }
+
+  fmText = fmText.replace(/^(updated:).*$/m, `$1 ${ts}`);
+
+  updated = updated.replace(/^---\n[\s\S]*?\n---/, `---\n${fmText}\n---`);
+  writeFileSync(projectFile, updated, "utf-8");
+
+  // Create needs-interactive.md
+  const contextFile = join(projectDir, "needs-interactive.md");
+  const contextContent = `# Needs Interactive Session
+
+**Phase**: ${phase}
+**Triggered**: ${ts}
+**Reason**: ${reason}
+
+## What was attempted
+
+<Description of what the worker tried to do>
+
+## Why autonomous completion failed
+
+<Specific explanation>
+
+## What the human needs to provide or decide
+
+- <Item 1>
+
+## Suggested approach
+
+<Optional>
+`;
+  writeFileSync(contextFile, contextContent, "utf-8");
+}
+
+export function clearNeedsInteractive(projectDir: string): void {
+  const projectFile = join(projectDir, "project.md");
+  if (!existsSync(projectFile)) return;
+  const ts = timestamp();
+
+  updateFrontmatterField(projectFile, "needs-interactive", false);
+  updateFrontmatterField(projectFile, "needs-interactive-reason", "");
+  updateFrontmatterField(projectFile, "updated", ts);
+
+  const contextFile = join(projectDir, "needs-interactive.md");
+  if (existsSync(contextFile)) {
+    unlinkSync(contextFile);
+  }
 }
 
 // --- Phase Navigation ---

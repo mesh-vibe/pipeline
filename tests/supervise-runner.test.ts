@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, readdirSync
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { runSupervise } from "../src/supervise-runner.js";
+import { runSupervise, parseQueueOutput } from "../src/supervise-runner.js";
 import { timestamp } from "../src/project.js";
 
 // Integration tests use the real pipeline directory structure.
@@ -801,6 +801,70 @@ status:
       // Should no longer be "2026-03-01"
       expect(updatedMatch![1].trim()).not.toBe("2026-03-01");
     }
+  });
+
+  // parseQueueOutput regex test — bracket format
+  it("parseQueueOutput parses bracket-format entries", () => {
+    const output = [
+      "  [4] 2026-03-15 10:30 | Work on vibe-flow project my-proj (current phase: implement)",
+      "  [8] 2026-03-15 11:00 !low | Continue mesh-vibe project 'other-proj': description",
+      "  [12] 2026-03-14 09:00 !high | Something else entirely",
+    ].join("\n");
+
+    const entries = parseQueueOutput(output);
+    expect(entries).toHaveLength(3);
+    expect(entries[0]).toEqual({ line: 4, timestamp: "2026-03-15 10:30", text: "Work on vibe-flow project my-proj (current phase: implement)" });
+    expect(entries[1]).toEqual({ line: 8, timestamp: "2026-03-15 11:00", text: "Continue mesh-vibe project 'other-proj': description" });
+    expect(entries[2]).toEqual({ line: 12, timestamp: "2026-03-14 09:00", text: "Something else entirely" });
+  });
+
+  it("parseQueueOutput returns empty array for empty input", () => {
+    expect(parseQueueOutput("")).toEqual([]);
+  });
+
+  it("parseQueueOutput handles normal-priority entries (no !tag)", () => {
+    const output = "  [10] 2026-03-15 12:00 | Simple task";
+    const entries = parseQueueOutput(output);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].text).toBe("Simple task");
+  });
+
+  // Contract test: dedup regex alignment with actual prompt formats
+  describe("dedup regex alignment with supervisor prompts", () => {
+    it("regex matches vibe-flow prompt format from supervise.ts:182", () => {
+      // Exact format produced by supervise.ts: `Work on vibe-flow project ${name} (current phase: ...)`
+      const prompt = "Work on vibe-flow project my-cool-project (current phase: implement, flow: sdlc-point-release-v1-0, priority: P2)";
+      const match = prompt.match(/Work on vibe-flow project (\S+)/);
+      expect(match).not.toBeNull();
+      expect(match![1]).toBe("my-cool-project");
+    });
+
+    it("regex matches mesh-vibe project prompt format from supervise.ts:246", () => {
+      // Exact format produced by supervise.ts: `Continue mesh-vibe project '${name}': ${description}`
+      const prompt = "Continue mesh-vibe project 'event-driven-orchestration': Dispatcher + worker pool + event bus";
+      const match = prompt.match(/Continue mesh-vibe project '([^']+)'/);
+      expect(match).not.toBeNull();
+      expect(match![1]).toBe("event-driven-orchestration");
+    });
+
+    it("vibe-flow regex extracts project name without trailing parenthetical", () => {
+      const prompt = "Work on vibe-flow project guard-the-seams (current phase: design, flow: sdlc-point-release-v1-0, priority: P3)";
+      const match = prompt.match(/Work on vibe-flow project (\S+)/);
+      // \S+ will grab "guard-the-seams" and stop at the space before "("
+      expect(match![1]).toBe("guard-the-seams");
+    });
+
+    it("mesh-vibe regex handles single-word project names", () => {
+      const prompt = "Continue mesh-vibe project 'pipeline': Fix supervisor bugs";
+      const match = prompt.match(/Continue mesh-vibe project '([^']+)'/);
+      expect(match![1]).toBe("pipeline");
+    });
+
+    it("mesh-vibe regex handles names with hyphens and numbers", () => {
+      const prompt = "Continue mesh-vibe project 'sv-pq-test-123': Test description";
+      const match = prompt.match(/Continue mesh-vibe project '([^']+)'/);
+      expect(match![1]).toBe("sv-pq-test-123");
+    });
   });
 
   // AC-13: PQ projects NOT scanned without flag

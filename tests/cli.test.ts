@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -144,5 +144,102 @@ describe("CLI integration", () => {
     const output = run("pipeline template --type library");
     expect(output).toContain("project-type: library");
     expect(output).toContain("npm pack succeeds");
+  });
+
+  // --- Needs Interactive CLI Tests ---
+
+  // AC-9: Unblock clears flag and removes context file
+  it("unblock clears needs-interactive flag", () => {
+    run(`pipeline create ${TEST_PROJECT} "Test project"`);
+
+    // Set needs-interactive manually
+    const projectFile = join(ACTIVE_DIR, TEST_PROJECT, "project.md");
+    let content = readFileSync(projectFile, "utf-8");
+    content = content.replace(
+      /^---\n/,
+      "---\nneeds-interactive: true\nneeds-interactive-reason: Test reason\n",
+    );
+    writeFileSync(projectFile, content, "utf-8");
+    writeFileSync(
+      join(ACTIVE_DIR, TEST_PROJECT, "needs-interactive.md"),
+      "# Context",
+      "utf-8",
+    );
+
+    const output = run(`pipeline unblock ${TEST_PROJECT}`);
+    expect(output).toContain(`Unblocked: ${TEST_PROJECT}`);
+    expect(output).toContain("needs-interactive cleared");
+    expect(output).toContain("needs-interactive.md removed");
+    expect(output).toContain("Updated timestamp refreshed");
+
+    // Verify the flag is cleared
+    const updated = readFileSync(projectFile, "utf-8");
+    expect(updated).toContain("needs-interactive: false");
+    expect(
+      existsSync(join(ACTIVE_DIR, TEST_PROJECT, "needs-interactive.md")),
+    ).toBe(false);
+  });
+
+  // AC-10: Unblock is idempotent when not flagged
+  it("unblock is idempotent when not flagged", () => {
+    run(`pipeline create ${TEST_PROJECT} "Test project"`);
+    const output = run(`pipeline unblock ${TEST_PROJECT}`);
+    expect(output).toContain("not flagged as needs-interactive");
+    expect(output).toContain("No changes made");
+  });
+
+  // AC-11: Unblock rejects non-existent project
+  it("unblock rejects non-existent project", () => {
+    try {
+      run("pipeline unblock nonexistent-project");
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e.stderr || e.message).toContain("not found in active pipeline");
+    }
+  });
+
+  // AC-12: Unblock rejects archived project
+  it("unblock rejects archived project", () => {
+    run(`pipeline create ${TEST_PROJECT} "Test project"`);
+    run(`pipeline cancel ${TEST_PROJECT} "Done"`);
+    try {
+      run(`pipeline unblock ${TEST_PROJECT}`);
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e.stderr || e.message).toContain("archived");
+    }
+  });
+
+  // AC-7: Status shows needs-interactive state
+  it("status shows needs-interactive indicator", () => {
+    run(`pipeline create ${TEST_PROJECT} "Test project"`);
+
+    const projectFile = join(ACTIVE_DIR, TEST_PROJECT, "project.md");
+    let content = readFileSync(projectFile, "utf-8");
+    content = content.replace(
+      /^---\n/,
+      "---\nneeds-interactive: true\nneeds-interactive-reason: Cannot validate game mechanics\n",
+    );
+    writeFileSync(projectFile, content, "utf-8");
+
+    const output = run(`pipeline status ${TEST_PROJECT}`);
+    expect(output).toContain("NEEDS INTERACTIVE: Cannot validate game mechanics");
+    expect(output).toContain(`pipeline unblock ${TEST_PROJECT}`);
+  });
+
+  // AC-8: List shows blocked indicator
+  it("list shows [!] for needs-interactive projects", () => {
+    run(`pipeline create ${TEST_PROJECT} "Test project"`);
+
+    const projectFile = join(ACTIVE_DIR, TEST_PROJECT, "project.md");
+    let content = readFileSync(projectFile, "utf-8");
+    content = content.replace(
+      /^---\n/,
+      "---\nneeds-interactive: true\nneeds-interactive-reason: Blocked\n",
+    );
+    writeFileSync(projectFile, content, "utf-8");
+
+    const output = run(`pipeline list`);
+    expect(output).toContain("[!]");
   });
 });

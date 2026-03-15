@@ -66,6 +66,8 @@ function toProjectState(proj: ParsedProject, template: FlowTemplate | null): Pro
     created: fm.created,
     stuckThresholdMinutes: fm["stuck-threshold-minutes"],
     cancelled: fm.cancelled,
+    needsInteractive: fm["needs-interactive"],
+    needsInteractiveReason: fm["needs-interactive-reason"],
     allGatesMet: gatesMet,
     hasOwnerSignoff: signoffGate ? signoffGate.checked : true,
     isHumanGate: phaseIsHumanGate,
@@ -123,27 +125,31 @@ function loadPqProjects(): PqProject[] {
 
 // --- Parse prompt-queue list output ---
 
-function parseQueueList(): QueueEntry[] {
+export function parseQueueOutput(output: string): QueueEntry[] {
+  if (!output) return [];
+
+  const entries: QueueEntry[] = [];
+  const lines = output.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(/^\s*\[(\d+)\]\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})(?:\s+![a-z]+)?\s+\|\s+(.+)$/);
+    if (match) {
+      entries.push({
+        line: parseInt(match[1], 10),
+        timestamp: match[2],
+        text: match[3],
+      });
+    }
+  }
+  return entries;
+}
+
+export function parseQueueList(): QueueEntry[] {
   try {
     const output = execSync("prompt-queue list 2>/dev/null", {
       encoding: "utf-8",
       timeout: 10000,
     }).trim();
-    if (!output) return [];
-
-    const entries: QueueEntry[] = [];
-    const lines = output.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(/^\s*(\d+)\.\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.+)$/);
-      if (match) {
-        entries.push({
-          line: parseInt(match[1], 10),
-          timestamp: match[2],
-          text: match[3],
-        });
-      }
-    }
-    return entries;
+    return parseQueueOutput(output);
   } catch {
     return [];
   }
@@ -190,7 +196,8 @@ function executeAction(action: SuperviseAction, dryRun: boolean): void {
     case "queue-step-pq": {
       const ts = timestamp();
       try {
-        execSync(`prompt-queue add ${JSON.stringify(action.prompt)}`, {
+        const dedupKey = action.project;
+        execSync(`prompt-queue add --priority low --dedup-key ${JSON.stringify(dedupKey)} ${JSON.stringify(action.prompt)}`, {
           stdio: "pipe",
           timeout: 10000,
         });
@@ -383,8 +390,27 @@ export function runSupervise(
       }
     }
 
-    // Stale queue cleanup
+    // Parse queue once — used for both dedup and stale cleanup
     const queueEntries = parseQueueList();
+
+    // Pre-execution dedup: skip queue actions for projects already pending
+    const pendingProjectNames = new Set<string>();
+    for (const entry of queueEntries) {
+      const vfMatch = entry.text.match(/Work on vibe-flow project (\S+)/);
+      if (vfMatch) pendingProjectNames.add(vfMatch[1]);
+      const pqMatch = entry.text.match(/Continue mesh-vibe project '([^']+)'/);
+      if (pqMatch) pendingProjectNames.add(pqMatch[1]);
+    }
+
+    for (let i = 0; i < actions.length; i++) {
+      const a = actions[i];
+      if ((a.type === "queue-work" || a.type === "queue-step-pq") &&
+          pendingProjectNames.has(a.project)) {
+        actions[i] = { type: "skip", project: a.project, reason: "already-queued" };
+      }
+    }
+
+    // Stale queue cleanup
     const cleanupActions = findStaleEntries(queueEntries, now);
     actions.push(...cleanupActions);
   }

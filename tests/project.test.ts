@@ -13,7 +13,11 @@ import {
   slugify,
   NAME_REGEX,
   timeAgo,
+  isNeedsInteractive,
+  setNeedsInteractive,
+  clearNeedsInteractive,
 } from "../src/project.js";
+import type { ProjectFrontmatter } from "../src/types.js";
 import { generateProjectMd, generateBugfixProjectMd, generateDefectMd } from "../src/template.js";
 
 describe("parseFrontmatter", () => {
@@ -257,5 +261,170 @@ describe("generateDefectMd", () => {
     expect(fm.description).toBe("Something broke");
     expect(fm.severity).toBe("high");
     expect(fm.status).toBe("open");
+  });
+});
+
+// --- Needs Interactive ---
+
+describe("isNeedsInteractive", () => {
+  // AC-4: isNeedsInteractive reads frontmatter
+  it("returns true when needs-interactive is true", () => {
+    const fm = { "needs-interactive": true } as ProjectFrontmatter;
+    expect(isNeedsInteractive(fm)).toBe(true);
+  });
+
+  it("returns false when needs-interactive is false", () => {
+    const fm = { "needs-interactive": false } as ProjectFrontmatter;
+    expect(isNeedsInteractive(fm)).toBe(false);
+  });
+
+  // AC-14: Existing projects without needs-interactive fields parse correctly
+  it("defaults to false for projects without the field", () => {
+    const content = `---
+name: old-project
+phase: design
+priority: 3
+---
+
+# Old Project
+`;
+    const raw = parseFrontmatter(content);
+    // toFrontmatter defaults needs-interactive to false
+    expect(raw["needs-interactive"]).toBeUndefined();
+    const fm = { "needs-interactive": raw["needs-interactive"] === "true" } as ProjectFrontmatter;
+    expect(isNeedsInteractive(fm)).toBe(false);
+  });
+});
+
+describe("setNeedsInteractive", () => {
+  let testDir: string;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `pipeline-ni-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  // AC-1: setNeedsInteractive sets frontmatter and creates context file
+  it("sets frontmatter fields and creates context file", () => {
+    const projectMd = `---
+name: test-project
+phase: implement
+priority: 3
+updated: 2026-03-10
+needs-interactive: false
+needs-interactive-reason:
+---
+
+# Test Project
+
+## Gates
+
+### Implement
+- [ ] Builds clean
+- [ ] Tests passing
+`;
+    writeFileSync(join(testDir, "project.md"), projectMd, "utf-8");
+
+    setNeedsInteractive(testDir, "Cannot validate game mechanics");
+
+    const content = readFileSync(join(testDir, "project.md"), "utf-8");
+    const fm = parseFrontmatter(content);
+    expect(fm["needs-interactive"]).toBe("true");
+    expect(fm["needs-interactive-reason"]).toBe("Cannot validate game mechanics");
+    expect(fm["updated"]).not.toBe("2026-03-10");
+
+    // AC-2: needs-interactive.md follows template format
+    expect(existsSync(join(testDir, "needs-interactive.md"))).toBe(true);
+    const niContent = readFileSync(join(testDir, "needs-interactive.md"), "utf-8");
+    expect(niContent).toContain("# Needs Interactive Session");
+    expect(niContent).toContain("**Phase**: implement");
+    expect(niContent).toContain("**Reason**: Cannot validate game mechanics");
+    expect(niContent).toContain("## What was attempted");
+    expect(niContent).toContain("## Why autonomous completion failed");
+    expect(niContent).toContain("## What the human needs to provide or decide");
+  });
+
+  it("adds fields when they don't exist in frontmatter", () => {
+    const projectMd = `---
+name: test-project
+phase: design
+priority: 3
+updated: 2026-03-10
+---
+
+# Test Project
+`;
+    writeFileSync(join(testDir, "project.md"), projectMd, "utf-8");
+
+    setNeedsInteractive(testDir, "Missing source material");
+
+    const content = readFileSync(join(testDir, "project.md"), "utf-8");
+    const fm = parseFrontmatter(content);
+    expect(fm["needs-interactive"]).toBe("true");
+    expect(fm["needs-interactive-reason"]).toBe("Missing source material");
+  });
+});
+
+describe("clearNeedsInteractive", () => {
+  let testDir: string;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `pipeline-ni-clear-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  // AC-3: clearNeedsInteractive clears frontmatter and removes context file
+  it("clears frontmatter fields and removes context file", () => {
+    const projectMd = `---
+name: test-project
+phase: implement
+priority: 3
+updated: 2026-03-10
+needs-interactive: true
+needs-interactive-reason: Cannot validate game mechanics
+---
+
+# Test Project
+`;
+    writeFileSync(join(testDir, "project.md"), projectMd, "utf-8");
+    writeFileSync(join(testDir, "needs-interactive.md"), "# Context", "utf-8");
+
+    clearNeedsInteractive(testDir);
+
+    const content = readFileSync(join(testDir, "project.md"), "utf-8");
+    const fm = parseFrontmatter(content);
+    expect(fm["needs-interactive"]).toBe("false");
+    expect(fm["needs-interactive-reason"]).toBe("");
+    expect(fm["updated"]).not.toBe("2026-03-10");
+    expect(existsSync(join(testDir, "needs-interactive.md"))).toBe(false);
+  });
+
+  it("handles missing needs-interactive.md gracefully", () => {
+    const projectMd = `---
+name: test-project
+phase: implement
+priority: 3
+updated: 2026-03-10
+needs-interactive: true
+needs-interactive-reason: Some reason
+---
+
+# Test Project
+`;
+    writeFileSync(join(testDir, "project.md"), projectMd, "utf-8");
+
+    clearNeedsInteractive(testDir);
+
+    const content = readFileSync(join(testDir, "project.md"), "utf-8");
+    const fm = parseFrontmatter(content);
+    expect(fm["needs-interactive"]).toBe("false");
   });
 });

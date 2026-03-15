@@ -24,6 +24,8 @@ function makeState(overrides: Partial<ProjectState> = {}): ProjectState {
     created: "2026-03-10",
     stuckThresholdMinutes: 120,
     cancelled: false,
+    needsInteractive: false,
+    needsInteractiveReason: "",
     allGatesMet: false,
     hasOwnerSignoff: true,
     isHumanGate: false,
@@ -160,6 +162,37 @@ describe("decideAction", () => {
     }
   });
 
+  // AC-5: Supervisor Case D skips needs-interactive projects
+  it("notifies and skips needs-interactive project", () => {
+    const state = makeState({
+      needsInteractive: true,
+      needsInteractiveReason: "Cannot validate game mechanics",
+    });
+    const action = decideAction(state, 0, 3, true, NOW);
+    expect(action.type).toBe("notify");
+    if (action.type === "notify") {
+      // AC-6: Supervisor notifies on needs-interactive
+      expect(action.priority).toBe("high");
+      expect(action.message).toContain("needs interactive session");
+      expect(action.message).toContain("Cannot validate game mechanics");
+    }
+  });
+
+  // AC-15: Supervisor Case D is checked before stuck detection
+  it("handles needs-interactive before stuck detection", () => {
+    const state = makeState({
+      needsInteractive: true,
+      needsInteractiveReason: "Missing ROM",
+      updated: "2026-03-12 12:00", // would be stuck (>120min)
+    });
+    const action = decideAction(state, 0, 3, true, NOW);
+    // Should notify (Case D), NOT queue-work (stuck detection)
+    expect(action.type).toBe("notify");
+    if (action.type === "notify") {
+      expect(action.message).toContain("needs interactive session");
+    }
+  });
+
   // AC-20: No-queue flag
   it("skips when canQueue is false", () => {
     const state = makeState({
@@ -207,6 +240,18 @@ describe("buildWorkPrompt", () => {
       const prompt = buildWorkPrompt(state);
       expect(prompt).toContain(PHASE_INSTRUCTIONS[phase]);
     }
+  });
+
+  // AC-16: Worker prompts include confidence-check instructions
+  it("includes confidence-check instructions", () => {
+    const state = makeState({ phase: "implement" });
+    const prompt = buildWorkPrompt(state);
+    expect(prompt).toContain("Confidence check");
+    expect(prompt).toContain("needs-interactive: true");
+    expect(prompt).toContain("needs-interactive-reason");
+    expect(prompt).toContain("needs-interactive.md");
+    expect(prompt).toContain("discussion.md");
+    expect(prompt).toContain("Do not check gates you cannot complete with confidence");
   });
 });
 

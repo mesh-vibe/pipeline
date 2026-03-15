@@ -25,17 +25,25 @@ Supervise active vibe-flow projects through their SDLC lifecycle.
 
 3. For each project, decide what to do based on its current phase and gate status:
 
-   **Case A — All gates for the current phase are met:**
+   **Case A — Cancelled:**
+   - Skip cancelled projects.
+
+   **Case D — Project has needs-interactive set:**
+   - If \`needs-interactive\` is \`true\` in frontmatter:
+     - Run \`notify send "vibe-flow: <name> needs interactive session — <needs-interactive-reason>" --priority high\`
+     - Skip. Do NOT re-queue work. Do NOT advance.
+
+   **Case B — All gates for the current phase are met:**
    - If phase is \`review\` and "Owner sign-off" gate is unchecked: run \`notify send "vibe-flow: <name> ready for approval" --priority high\` and skip. Do NOT auto-approve.
    - Otherwise: run \`pipeline advance <name>\` to move to the next phase. Log the transition.
 
-   **Case B — Gates are incomplete and project is stuck:**
+   **Case C — Gates are incomplete and project is stuck:**
    - Parse the \`updated\` timestamp. Compute elapsed minutes since last update.
    - If elapsed < \`stuck-threshold-minutes\`: skip (actively being worked on).
    - If elapsed >= \`stuck-threshold-minutes\` OR project was just created (no phase history beyond the initial entry):
      queue work for the project (see "Queuing Work" below).
 
-   **Case C — Project is in \`final-review\` phase with all gates met:**
+   **Case E — Project is in \`final-review\` phase with all gates met:**
    - Run \`pipeline archive <name>\` to complete the project.
    - Run \`notify send "vibe-flow project complete: <name>" --priority normal\`
 
@@ -65,6 +73,15 @@ The prompt should tell the worker:
 **test**: Run tests against acceptance criteria. File defects via \`pipeline bug <name> "<description>"\` for failures. Check test gates when all pass.
 
 **final-review**: Review all artifacts for consistency. Write \`final-review.md\`. Check final-review gates.
+
+### Confidence check (all phases)
+
+**Confidence check**: Before producing output, assess whether you can complete this phase with confidence. If you cannot — because you lack source material, the spec is ambiguous, you're guessing at behavior you can't validate, or the task fundamentally requires human judgment — do NOT produce low-quality output. Instead:
+1. Set \`needs-interactive: true\` in project.md frontmatter
+2. Set \`needs-interactive-reason: "<brief reason>"\` in frontmatter
+3. Create \`needs-interactive.md\` with what you attempted and what you need
+4. Append a note to discussion.md
+5. Stop. Do not check gates you cannot complete with confidence.
 
 ## Output
 

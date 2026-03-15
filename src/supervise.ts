@@ -7,7 +7,7 @@ export type SuperviseAction =
   | { type: "archive"; project: string }
   | { type: "notify"; project: string; message: string; priority: "normal" | "high" }
   | { type: "queue-work"; project: string; phase: string; prompt: string }
-  | { type: "skip"; project: string; reason: "active" | "limit" | "template" | "cancelled" | "human-gate-pending" }
+  | { type: "skip"; project: string; reason: "active" | "limit" | "template" | "cancelled" | "human-gate-pending" | "needs-interactive" | "already-queued" }
   | { type: "error"; project: string; error: string }
   | { type: "complete-pq"; project: string }
   | { type: "queue-step-pq"; project: string; step: string; prompt: string }
@@ -61,7 +61,7 @@ export const PHASE_INSTRUCTIONS: Record<string, string> = {
   review:
     "Produce use-cases.md, cli-spec.md, acceptance-criteria.md. Check review gates (except Owner sign-off — that requires human approval via pipeline approve).",
   implement:
-    "Build the project according to the design and spec docs. Check implement gates when builds pass and tests pass.",
+    "Build the project according to the design and spec docs. After standards-bot passes, run a security check following ~/mesh-vibe/security-bot/instructions.md (Scan 1 only, scoped to this project). Check implement gates when builds pass, tests pass, and security check passes.",
   test:
     'Run tests against acceptance criteria. File defects via pipeline bug <name> "<description>" for failures. Check test gates when all pass.',
   "final-review":
@@ -96,6 +96,8 @@ export interface ProjectState {
   hasOwnerSignoff: boolean;
   isHumanGate: boolean;
   isTerminal: boolean;
+  needsInteractive: boolean;
+  needsInteractiveReason: string;
   uncheckedGateLabels: string[];
   projectDir: string;
   specDir: string;
@@ -110,6 +112,16 @@ export function decideAction(
 ): SuperviseAction {
   if (state.cancelled) {
     return { type: "skip", project: state.name, reason: "cancelled" };
+  }
+
+  // Case D — needs-interactive: notify and skip, do NOT re-queue
+  if (state.needsInteractive) {
+    return {
+      type: "notify",
+      project: state.name,
+      message: `vibe-flow: ${state.name} needs interactive session — ${state.needsInteractiveReason}`,
+      priority: "high",
+    };
   }
 
   if (state.allGatesMet) {
@@ -172,9 +184,15 @@ export function buildWorkPrompt(state: ProjectState): string {
     `Flow spec: ${state.specDir}/.`,
     `Gates to check: ${gateList}.`,
     `${phaseInstr}`,
-    `Update the updated field in project.md frontmatter when done.`,
+    `Update the updated field in project.md frontmatter when done. Use local time from the date command: $(date "+%Y-%m-%d %H:%M"). Do NOT use JavaScript Date — it produces UTC which breaks the supervisor.`,
     `Append decisions and notes to discussion.md.`,
     INJECTION_WARNING,
+    `**Confidence check**: Before producing output, assess whether you can complete this phase with confidence. If you cannot — because you lack source material, the spec is ambiguous, you're guessing at behavior you can't validate, or the task fundamentally requires human judgment — do NOT produce low-quality output. Instead:`,
+    `1. Set \`needs-interactive: true\` in project.md frontmatter`,
+    `2. Set \`needs-interactive-reason: "<brief reason>"\` in frontmatter`,
+    `3. Create \`needs-interactive.md\` with what you attempted and what you need`,
+    `4. Append a note to discussion.md`,
+    `5. Stop. Do not check gates you cannot complete with confidence.`,
   ].join("\n");
 }
 
@@ -233,7 +251,7 @@ export function decidePqAction(
     "",
     `When you complete this step:`,
     `1. Edit the project file: change "- [ ] ${nextStep.text}" to "- [x] ${nextStep.text}"`,
-    `2. Update the \`updated\` field in frontmatter to the current timestamp (format: YYYY-MM-DD HH:MM)`,
+    `2. Update the \`updated\` field in frontmatter using the date command: $(date "+%Y-%m-%d %H:%M"). Do NOT use JavaScript Date — it produces UTC.`,
     "",
     `The supervisor will auto-queue the next step next beat. Or, queue it yourself now via prompt-queue add if you want faster throughput.`,
   ].join("\n");

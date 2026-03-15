@@ -35,6 +35,7 @@ import {
 } from "./paths.js";
 import {
   readProject,
+  readArchivedProject,
   listActiveProjects,
   listArchivedProjects,
   parseGates,
@@ -56,6 +57,8 @@ import {
   slugify,
   NAME_REGEX,
   timeAgo,
+  isNeedsInteractive,
+  clearNeedsInteractive,
 } from "./project.js";
 import { generateProjectMd, generateProjectMdFromTemplate, generateBugfixProjectMd, generateDefectMd } from "./template.js";
 import { installSkill } from "./templates/skill.md.js";
@@ -73,6 +76,7 @@ import {
   migrateProject,
   resolveGates,
   isEntryPoint,
+  isHumanGate,
 } from "./flow.js";
 import { runSupervise } from "./supervise-runner.js";
 
@@ -429,6 +433,12 @@ program
         `Stuck:       ${isStuck ? "YES" : "no"} (threshold: ${fm["stuck-threshold-minutes"]}m)`,
       );
 
+      if (isNeedsInteractive(fm)) {
+        console.log();
+        console.log(`\u26A0 NEEDS INTERACTIVE: ${fm["needs-interactive-reason"]}`);
+        console.log(`  Run: pipeline unblock ${fm.name}`);
+      }
+
       const gateSections = parseGates(proj.rawContent);
       for (const section of gateSections) {
         console.log(`\n${section.name} Gates:`);
@@ -490,7 +500,9 @@ program
           console.log(
             `  ${proj.frontmatter.name.padEnd(25)} ${checked}/${total} gates   priority:${proj.frontmatter.priority}   updated ${updated}`,
           );
-          if (phase === "review") {
+          if (isNeedsInteractive(proj.frontmatter)) {
+            console.log(`  \u26A0 Needs interactive: ${proj.frontmatter["needs-interactive-reason"]}`);
+          } else if (phase === "review") {
             const reviewGates = getPhaseGates(proj.rawContent, "review");
             const signoffGate = reviewGates.find((g) =>
               g.label.includes("Owner sign-off"),
@@ -577,8 +589,9 @@ program
       for (const proj of projects) {
         const fm = proj.frontmatter;
         const { checked, total } = countGates(proj.rawContent, fm.phase as string);
+        const niFlag = isNeedsInteractive(fm) ? "  [!]" : "";
         console.log(
-          `${fm.name.padEnd(25)} ${(fm.phase as string).padEnd(15)} ${fm.flow.padEnd(28)} ${checked}/${total}  pri:${fm.priority}`,
+          `${fm.name.padEnd(25)} ${(fm.phase as string).padEnd(15)} ${fm.flow.padEnd(28)} ${checked}/${total}  pri:${fm.priority}${niFlag}`,
         );
       }
     }
@@ -588,7 +601,7 @@ program
 
 program
   .command("approve")
-  .description("Sign off on review \u2192 implement transition")
+  .description("Sign off on a human-gate phase (review, evaluate, deploy, etc.)")
   .argument("<name>", "Project name")
   .action((name: string) => {
     const proj = readProject(name);
@@ -597,41 +610,93 @@ program
       process.exit(1);
     }
 
-    if (proj.frontmatter.phase !== "review") {
+    const phase = proj.frontmatter.phase;
+    const template = loadInstalledTemplate(proj.frontmatter.flow);
+
+    // Check if current phase is a human-gate (flow-aware, falls back to "review")
+    const isHuman = template
+      ? isHumanGate(phase, template)
+      : phase === "review";
+
+    if (!isHuman) {
       console.error(
-        `Project '${name}' is in ${proj.frontmatter.phase} phase, not review. Cannot approve.`,
+        `Project '${name}' is in ${phase} phase, which is not a human-gate phase. Cannot approve.`,
       );
       process.exit(1);
     }
 
-    const reviewGates = getPhaseGates(proj.rawContent, "review");
-    const unchecked = reviewGates.filter(
+    const gates = getPhaseGates(proj.rawContent, phase);
+    const unchecked = gates.filter(
       (g) => !g.checked && !g.label.includes("Owner sign-off"),
     );
     if (unchecked.length > 0) {
       console.error(
-        `Project '${name}' has unchecked review gates: ${unchecked.map((g) => g.label).join(", ")}`,
+        `Project '${name}' has unchecked ${phase} gates: ${unchecked.map((g) => g.label).join(", ")}`,
       );
       process.exit(1);
     }
 
     checkGate(name, "Owner sign-off");
 
+    const next = nextPhase(phase, template ?? undefined);
     const ts = timestamp();
-    updateProject(name, {
-      phase: "implement",
-      updated: timestamp(),
-      "approved-at": ts,
-    });
-    appendPhaseHistory(
-      name,
-      `${ts} — Owner approved. Phase: review → implement`,
-    );
-
-    console.log(`Approved: ${name}`);
-    console.log("\u2713 Owner sign-off gate checked");
-    console.log("\u2713 Phase advanced: review \u2192 implement");
+    if (next) {
+      updateProject(name, {
+        phase: next,
+        updated: ts,
+        "approved-at": ts,
+      });
+      appendPhaseHistory(
+        name,
+        `${ts} — Owner approved. Phase: ${phase} → ${next}`,
+      );
+      console.log(`Approved: ${name}`);
+      console.log("\u2713 Owner sign-off gate checked");
+      console.log(`\u2713 Phase advanced: ${phase} \u2192 ${next}`);
+    } else {
+      updateProject(name, {
+        updated: ts,
+        "approved-at": ts,
+      });
+      appendPhaseHistory(
+        name,
+        `${ts} — Owner approved (terminal phase: ${phase})`,
+      );
+      console.log(`Approved: ${name}`);
+      console.log("\u2713 Owner sign-off gate checked");
+    }
     console.log("Logged in Phase History.");
+  });
+
+// --- unblock ---
+
+program
+  .command("unblock")
+  .description("Clear needs-interactive flag after human resolution")
+  .argument("<name>", "Project name")
+  .action((name: string) => {
+    const proj = readProject(name);
+    if (!proj) {
+      if (readArchivedProject(name)) {
+        console.error(`Project '${name}' is archived. Cannot unblock.`);
+      } else {
+        console.error(`Project '${name}' not found in active pipeline`);
+      }
+      process.exit(1);
+    }
+
+    if (!isNeedsInteractive(proj.frontmatter)) {
+      console.log(`Project '${name}' is not flagged as needs-interactive. No changes made.`);
+      return;
+    }
+
+    const projectDir = getProjectDir(name);
+    clearNeedsInteractive(projectDir);
+
+    console.log(`Unblocked: ${name}`);
+    console.log("\u2713 needs-interactive cleared");
+    console.log("\u2713 needs-interactive.md removed");
+    console.log("\u2713 Updated timestamp refreshed");
   });
 
 // --- advance ---

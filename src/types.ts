@@ -32,6 +32,8 @@ export interface ProjectFrontmatter {
   "cancelled-reason": string;
   "cancelled-at": string;
   "cancelled-from": string;
+  "needs-interactive": boolean;
+  "needs-interactive-reason": string;
 }
 
 export interface ParsedProject {
