@@ -34,6 +34,7 @@ import {
   type PqProject,
   type QueueEntry,
 } from "./supervise.js";
+import { postMemo } from "./memo.js";
 
 // --- Build project state from ParsedProject ---
 
@@ -45,17 +46,33 @@ function toProjectState(proj: ParsedProject, template: FlowTemplate | null): Pro
   const unchecked = gates.filter((g) => !g.checked).map((g) => g.label);
   const phaseIsHumanGate = template ? isHumanGate(phase, template) : phase === "review";
 
-  // For human-gate phases, "all gates met" means all gates except Owner sign-off
+  // Human-input gates: Owner sign-off checkboxes, yes-no gates, and text gates
+  // These require human interaction and should not block the "all non-signoff met" check.
+  const isHumanInputGate = (g: typeof gates[0]) =>
+    g.label.includes("Owner sign-off") || g.type === "yes-no" || g.type === "text";
+
+  // For human-gate phases, "all gates met" means all gates except human-input gates
   // are checked. This allows the notify path to fire when only the human gate remains.
-  const nonSignoffGates = signoffGate
-    ? gates.filter((g) => !g.label.includes("Owner sign-off"))
-    : gates;
-  const allNonSignoffMet = nonSignoffGates.length > 0 && nonSignoffGates.every((g) => g.checked);
+  const nonHumanInputGates = gates.filter((g) => !isHumanInputGate(g));
+  const hasHumanInputGate = gates.some(isHumanInputGate);
+  const allNonSignoffMet = hasHumanInputGate
+    ? nonHumanInputGates.length === 0 || nonHumanInputGates.every((g) => g.checked)
+    : false;
   const gatesMet = phaseIsHumanGate ? allNonSignoffMet : allGatesMet(proj.rawContent, phase);
 
   const projectDir = proj.filePath.replace(/\/project\.md$/, "");
-  const flowSlug = fm.flow.toLowerCase().replace(/\./g, "-");
-  const specDir = join(getSpecDir(), flowSlug);
+  // Resolve spec dir: try exact flow name first, then check disk for case-insensitive match
+  const specBase = getSpecDir();
+  let specDir = join(specBase, fm.flow);
+  if (!existsSync(specDir)) {
+    // Try to find a matching directory on disk (handles case/punctuation differences)
+    try {
+      const entries = readdirSync(specBase, { withFileTypes: true });
+      const flowSlug = fm.flow.toLowerCase().replace(/\./g, "-");
+      const match = entries.find((e) => e.isDirectory() && e.name.toLowerCase().replace(/\./g, "-") === flowSlug);
+      if (match) specDir = join(specBase, match.name);
+    } catch { /* use original */ }
+  }
 
   return {
     name: fm.name,
@@ -69,7 +86,7 @@ function toProjectState(proj: ParsedProject, template: FlowTemplate | null): Pro
     needsInteractive: fm["needs-interactive"],
     needsInteractiveReason: fm["needs-interactive-reason"],
     allGatesMet: gatesMet,
-    hasOwnerSignoff: signoffGate ? signoffGate.checked : true,
+    hasOwnerSignoff: hasHumanInputGate ? gates.filter(isHumanInputGate).every((g) => g.checked) : true,
     isHumanGate: phaseIsHumanGate,
     isTerminal: template ? isTerminal(phase, template) : phase === "final-review",
     uncheckedGateLabels: unchecked,
@@ -162,17 +179,28 @@ function executeAction(action: SuperviseAction, dryRun: boolean): void {
 
   switch (action.type) {
     case "advance": {
+      emitEvent(`pipeline.${action.from}.gates-complete`, {
+        project: action.project,
+        phase: action.from,
+        flow: action.flow ?? "",
+      });
       const ts = timestamp();
       updateProject(action.project, { phase: action.to, updated: ts });
       appendPhaseHistory(
         action.project,
         `${ts} — Phase: ${action.from} → ${action.to} (auto-advanced by supervisor)`,
       );
-      emitEvent("pipeline.project.advanced", {
+      emitEvent("pipeline.phase.advanced", {
         project: action.project,
         from: action.from,
         to: action.to,
+        flow: action.flow ?? "",
       });
+      postMemo(
+        `${action.project}: ${action.from} → ${action.to}`,
+        `Pipeline project **${action.project}** advanced from ${action.from} to ${action.to} (auto-advanced by supervisor, all gates met).`,
+        { tags: "pipeline, phase-change", related: action.project },
+      );
       break;
     }
     case "archive": {
@@ -184,6 +212,11 @@ function executeAction(action: SuperviseAction, dryRun: boolean): void {
       } catch {
         // may already be archived
       }
+      postMemo(
+        `${action.project}: archived`,
+        `Pipeline project **${action.project}** completed and archived by supervisor.`,
+        { tags: "pipeline, archived", related: action.project },
+      );
       break;
     }
     case "notify": {
@@ -410,28 +443,30 @@ export function runSupervise(
         actions.push({ type: "error", project: pq.name, error: msg });
       }
     }
+  }
 
-    // Parse queue once — used for both dedup and stale cleanup
-    const queueEntries = parseQueueList();
+  // Parse queue once — used for dedup (all projects) and stale cleanup
+  const queueEntries = parseQueueList();
 
-    // Pre-execution dedup: skip queue actions for projects already pending
-    const pendingProjectNames = new Set<string>();
-    for (const entry of queueEntries) {
-      const vfMatch = entry.text.match(/Work on vibe-flow project (\S+)/);
-      if (vfMatch) pendingProjectNames.add(vfMatch[1]);
-      const pqMatch = entry.text.match(/Continue mesh-vibe project '([^']+)'/);
-      if (pqMatch) pendingProjectNames.add(pqMatch[1]);
+  // Pre-execution dedup: skip queue actions for projects already pending
+  const pendingProjectNames = new Set<string>();
+  for (const entry of queueEntries) {
+    const vfMatch = entry.text.match(/Work on vibe-flow project (\S+)/);
+    if (vfMatch) pendingProjectNames.add(vfMatch[1]);
+    const pqMatch = entry.text.match(/Continue mesh-vibe project '([^']+)'/);
+    if (pqMatch) pendingProjectNames.add(pqMatch[1]);
+  }
+
+  for (let i = 0; i < actions.length; i++) {
+    const a = actions[i];
+    if ((a.type === "queue-work" || a.type === "queue-step-pq") &&
+        pendingProjectNames.has(a.project)) {
+      actions[i] = { type: "skip", project: a.project, reason: "already-queued" };
     }
+  }
 
-    for (let i = 0; i < actions.length; i++) {
-      const a = actions[i];
-      if ((a.type === "queue-work" || a.type === "queue-step-pq") &&
-          pendingProjectNames.has(a.project)) {
-        actions[i] = { type: "skip", project: a.project, reason: "already-queued" };
-      }
-    }
-
-    // Stale queue cleanup
+  // Stale queue cleanup (only when prompt-queue mode is active)
+  if (options.promptQueue) {
     const cleanupActions = findStaleEntries(queueEntries, now);
     actions.push(...cleanupActions);
   }

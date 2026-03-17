@@ -44,6 +44,7 @@ import {
   allGatesMet,
   updateProject,
   checkGate,
+  answerGate,
   uncheckPhaseGates,
   appendPhaseHistory,
   nextPhase,
@@ -77,8 +78,22 @@ import {
   resolveGates,
   isEntryPoint,
   isHumanGate,
+  isTerminal,
+  nextPhaseFromTemplate,
+  getFlowGateByLabel,
 } from "./flow.js";
 import { runSupervise } from "./supervise-runner.js";
+import { postMemo } from "./memo.js";
+
+function localTimestamp(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const h = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d} ${h}:${min}`;
+}
 
 const SPEC_README = `# vibe-flow-spec
 
@@ -155,7 +170,7 @@ Runtime data for the vibe-flow pipeline. Managed by the \`pipeline\` CLI.
 \`\`\`
 vibe-flow/
   flows/
-    sdlc-point-release-v1-0/
+    point-release/
       active/        # SDLC projects in progress
       archive/       # Completed or cancelled SDLC projects
     research/
@@ -209,8 +224,8 @@ program
     }
 
     // Create default flow directories
-    const defaultFlowActive = getFlowActiveDir("sdlc-point-release-v1-0");
-    const defaultFlowArchive = getFlowArchiveDir("sdlc-point-release-v1-0");
+    const defaultFlowActive = getFlowActiveDir("point-release");
+    const defaultFlowArchive = getFlowArchiveDir("point-release");
     if (!existsSync(defaultFlowActive)) {
       mkdirSync(defaultFlowActive, { recursive: true });
       console.log(`Created ${defaultFlowActive}`);
@@ -238,10 +253,10 @@ program
     }
 
     // Install YAML flow templates
-    const sdlcYamlPath = join(specDir, "sdlc-point-release-v1-0.yaml");
+    const sdlcYamlPath = join(specDir, "point-release.yaml");
     if (!existsSync(sdlcYamlPath)) {
       writeFileSync(sdlcYamlPath, SDLC_YAML, "utf-8");
-      console.log("Installed flow template: sdlc-point-release-v1-0.yaml");
+      console.log("Installed flow template: point-release.yaml");
     }
     const researchYamlPath = join(specDir, "research.yaml");
     if (!existsSync(researchYamlPath)) {
@@ -333,7 +348,7 @@ program
     let flowName = opts.flow;
     if (!flowName) {
       const defaultTemplate = listInstalledTemplates().find((t) => t.default);
-      flowName = defaultTemplate ? defaultTemplate.name : "sdlc-point-release-v1-0";
+      flowName = defaultTemplate ? defaultTemplate.name : "point-release";
     }
 
     // Try to load a YAML flow template
@@ -384,6 +399,16 @@ program
     console.log(`  Phase: ${startPhase}`);
     console.log(`  Priority: ${priority}`);
     console.log(`  Directory: ${projectDir}/`);
+
+    try {
+      const data = JSON.stringify({ project: name, flow: flowName, phase: startPhase, priority });
+      execSync(
+        `eventlog emit "pipeline.project.created" --source pipeline --data '${data}'`,
+        { stdio: "pipe", timeout: 5000 },
+      );
+    } catch {
+      // fire-and-forget
+    }
   });
 
 // --- status ---
@@ -417,7 +442,9 @@ program
       const fm = proj.frontmatter;
       const updatedAgo = timeAgo(fm.updated);
       const stuckMs = fm["stuck-threshold-minutes"] * 60000;
-      const timeSinceUpdate = Date.now() - new Date(fm.updated).getTime();
+      const hasTimezone = fm.updated.endsWith("Z") || /T\d{2}:\d{2}(:\d{2})?([+-]\d{2}:?\d{2})$/.test(fm.updated);
+      const normalizedUpdated = hasTimezone ? fm.updated : fm.updated.replace(/ /, "T") + "Z";
+      const timeSinceUpdate = Date.now() - new Date(normalizedUpdated).getTime();
       const isStuck = timeSinceUpdate > stuckMs;
 
       console.log(fm.name);
@@ -490,10 +517,17 @@ program
       console.log("Pipeline Status");
       console.log("\u2550".repeat(15));
 
-      for (const phase of PHASES) {
+      // Collect all phases: standard SDLC phases first, then any extras from other flows
+      const allPhases = [...PHASES];
+      for (const p of projects) {
+        const ph = p.frontmatter.phase as string;
+        if (ph && !allPhases.includes(ph)) allPhases.push(ph);
+      }
+
+      for (const phase of allPhases) {
         const inPhase = projects.filter((p) => p.frontmatter.phase === phase);
-        console.log(`\n${phase.toUpperCase()} (${inPhase.length})`);
         if (inPhase.length === 0) continue;
+        console.log(`\n${phase.toUpperCase()} (${inPhase.length})`);
         for (const proj of inPhase) {
           const { checked, total } = countGates(proj.rawContent, phase);
           const updated = timeAgo(proj.frontmatter.updated);
@@ -569,10 +603,29 @@ program
           JSON.stringify(
             {
               status: "ok",
-              data: projects.map((p) => ({
-                ...p.frontmatter,
-                gates: countGates(p.rawContent, p.frontmatter.phase as string),
-              })),
+              data: projects.map((p) => {
+                const fm = p.frontmatter;
+                const phase = fm.phase as string;
+                const template = loadInstalledTemplate(fm.flow);
+                const gates = getPhaseGates(p.rawContent, phase);
+                const signoffGate = gates.find((g) => g.label.includes("Owner sign-off"));
+                const phaseIsHumanGate = template ? isHumanGate(phase, template) : phase === "review";
+                const nonSignoffGates = signoffGate
+                  ? gates.filter((g) => !g.label.includes("Owner sign-off"))
+                  : gates;
+                const allNonSignoffMet = nonSignoffGates.length > 0 && nonSignoffGates.every((g) => g.checked);
+                const gatesMet = phaseIsHumanGate ? allNonSignoffMet : allGatesMet(p.rawContent, phase);
+
+                return {
+                  ...fm,
+                  gates: countGates(p.rawContent, phase),
+                  "all-gates-met": gatesMet,
+                  "is-terminal": template ? isTerminal(phase, template) : phase === "final-review",
+                  "is-human-gate": phaseIsHumanGate,
+                  "has-owner-signoff": signoffGate ? signoffGate.checked : true,
+                  "next-phase": template ? nextPhaseFromTemplate(phase, template) : nextPhase(phase),
+                };
+              }),
             },
             null,
             2,
@@ -597,13 +650,33 @@ program
     }
   });
 
+// --- touch ---
+
+program
+  .command("touch")
+  .description("Update the 'updated' timestamp to local now")
+  .argument("<name>", "Project name")
+  .action((name: string) => {
+    const proj = readProject(name);
+    if (!proj) {
+      console.error(`Project '${name}' not found in active pipeline`);
+      process.exit(1);
+    }
+    const now = localTimestamp();
+    updateProject(name, { updated: now });
+    console.log(`${name}: updated → ${now}`);
+  });
+
 // --- approve ---
 
 program
   .command("approve")
   .description("Sign off on a human-gate phase (review, evaluate, deploy, etc.)")
   .argument("<name>", "Project name")
-  .action((name: string) => {
+  .option("--yes", "Answer yes to a yes-no gate")
+  .option("--no", "Answer no to a yes-no gate (triggers cancel/shelve)")
+  .option("--answer <text>", "Provide text for a text gate")
+  .action((name: string, opts: { yes?: boolean; no?: boolean; answer?: string }) => {
     const proj = readProject(name);
     if (!proj) {
       console.error(`Project '${name}' not found in active pipeline`);
@@ -626,13 +699,177 @@ program
     }
 
     const gates = getPhaseGates(proj.rawContent, phase);
-    const unchecked = gates.filter(
-      (g) => !g.checked && !g.label.includes("Owner sign-off"),
+
+    // Find the pending human-input gate (yes-no or text that needs answering)
+    const pendingHumanGate = gates.find(
+      (g) => !g.checked && (g.type === "yes-no" || g.type === "text"),
     );
-    if (unchecked.length > 0) {
-      console.error(
-        `Project '${name}' has unchecked ${phase} gates: ${unchecked.map((g) => g.label).join(", ")}`,
+
+    // If --yes, --no, or --answer provided, handle the specific gate type
+    if (opts.yes || opts.no) {
+      if (!pendingHumanGate || pendingHumanGate.type !== "yes-no") {
+        console.error(
+          `Project '${name}' has no pending yes-no gate in ${phase} phase.`,
+        );
+        process.exit(1);
+      }
+      const answer = opts.yes ? "yes" : "no";
+      answerGate(name, pendingHumanGate.label, answer, "yes-no");
+      console.log(`\u2713 Gate answered: ${pendingHumanGate.label} → ${answer}`);
+
+      if (opts.no) {
+        // Determine on-no behavior from flow spec
+        let onNo: "cancel" | "shelve" = "cancel";
+        if (template) {
+          const flowGate = getFlowGateByLabel(phase, pendingHumanGate.label, template, proj.frontmatter["project-type"]);
+          if (flowGate?.onNo) onNo = flowGate.onNo;
+        }
+
+        const ts = timestamp();
+        if (onNo === "shelve") {
+          // Shelve: archive without cancelling
+          appendPhaseHistory(
+            name,
+            `${ts} — Gate "${pendingHumanGate.label}" answered no → shelved`,
+          );
+          updateProject(name, { updated: ts });
+          try { moveToArchive(name); } catch { /* may already be archived */ }
+          console.log(`\u2713 Project shelved (archived).`);
+        } else {
+          // Cancel
+          updateProject(name, {
+            cancelled: true,
+            "cancelled-reason": `Gate "${pendingHumanGate.label}" answered no`,
+            "cancelled-at": ts,
+            "cancelled-from": phase,
+            updated: ts,
+          });
+          appendPhaseHistory(
+            name,
+            `${ts} — Gate "${pendingHumanGate.label}" answered no → cancelled`,
+          );
+          console.log(`\u2713 Project cancelled.`);
+        }
+
+        try {
+          const data = JSON.stringify({ project: name, phase, answer: "no", onNo, flow: proj.frontmatter.flow });
+          execSync(
+            `eventlog emit "pipeline.gate.answered-no" --source pipeline --data '${data}'`,
+            { stdio: "pipe", timeout: 5000 },
+          );
+        } catch { /* fire-and-forget */ }
+        console.log("Logged in Phase History.");
+        return;
+      }
+
+      // --yes: fall through to advance logic
+      const ts = timestamp();
+      appendPhaseHistory(
+        name,
+        `${ts} — Gate "${pendingHumanGate.label}" answered yes`,
       );
+
+      const next = nextPhase(phase, template ?? undefined);
+      if (next) {
+        updateProject(name, { phase: next, updated: ts, "approved-at": ts });
+        appendPhaseHistory(name, `${ts} — Owner approved. Phase: ${phase} → ${next}`);
+        console.log(`\u2713 Phase advanced: ${phase} \u2192 ${next}`);
+      } else {
+        updateProject(name, { updated: ts, "approved-at": ts });
+        appendPhaseHistory(name, `${ts} — Owner approved (terminal phase: ${phase})`);
+      }
+
+      try {
+        const data = JSON.stringify({ project: name, phase, answer: "yes", flow: proj.frontmatter.flow });
+        execSync(
+          `eventlog emit "pipeline.review.approved" --source pipeline --data '${data}'`,
+          { stdio: "pipe", timeout: 5000 },
+        );
+      } catch { /* fire-and-forget */ }
+      console.log("Logged in Phase History.");
+      return;
+    }
+
+    if (opts.answer !== undefined) {
+      if (!pendingHumanGate || pendingHumanGate.type !== "text") {
+        console.error(
+          `Project '${name}' has no pending text gate in ${phase} phase.`,
+        );
+        process.exit(1);
+      }
+      if (!opts.answer.trim()) {
+        console.error("Answer text cannot be empty.");
+        process.exit(1);
+      }
+      answerGate(name, pendingHumanGate.label, opts.answer, "text");
+      console.log(`\u2713 Gate answered: ${pendingHumanGate.label} ${opts.answer}`);
+
+      const ts = timestamp();
+      appendPhaseHistory(
+        name,
+        `${ts} — Gate "${pendingHumanGate.label}" answered: ${opts.answer}`,
+      );
+
+      // Check if all gates are now met after answering text gate
+      const updatedProj = readProject(name);
+      if (updatedProj) {
+        const updatedGates = getPhaseGates(updatedProj.rawContent, phase);
+        const stillUnchecked = updatedGates.filter((g) => !g.checked);
+        if (stillUnchecked.length === 0) {
+          const next = nextPhase(phase, template ?? undefined);
+          if (next) {
+            updateProject(name, { phase: next, updated: ts, "approved-at": ts });
+            appendPhaseHistory(name, `${ts} — All gates met. Phase: ${phase} → ${next}`);
+            console.log(`\u2713 Phase advanced: ${phase} \u2192 ${next}`);
+          } else {
+            updateProject(name, { updated: ts, "approved-at": ts });
+          }
+        } else {
+          updateProject(name, { updated: ts });
+        }
+      }
+
+      try {
+        const data = JSON.stringify({ project: name, phase, answer: opts.answer, flow: proj.frontmatter.flow });
+        execSync(
+          `eventlog emit "pipeline.gate.answered" --source pipeline --data '${data}'`,
+          { stdio: "pipe", timeout: 5000 },
+        );
+      } catch { /* fire-and-forget */ }
+      console.log("Logged in Phase History.");
+      return;
+    }
+
+    // Default: checkbox sign-off (original behavior)
+    // Only block on checkbox gates that appear BEFORE Owner sign-off.
+    // Gates after sign-off (merge PR, deploy, verify, close issue) run post-approval.
+    const signOffIndex = gates.findIndex((g) => g.label.includes("Owner sign-off"));
+    const gatesBeforeSignOff = signOffIndex >= 0 ? gates.slice(0, signOffIndex) : gates;
+    const uncheckedBeforeSignOff = gatesBeforeSignOff.filter(
+      (g) => !g.checked && g.type === "checkbox",
+    );
+    if (uncheckedBeforeSignOff.length > 0) {
+      console.error(
+        `Project '${name}' has unchecked ${phase} gates: ${uncheckedBeforeSignOff.map((g) => g.label).join(", ")}`,
+      );
+      process.exit(1);
+    }
+
+    // Check for unanswered yes-no/text gates that must be answered first
+    const unansweredRich = gates.filter(
+      (g) => !g.checked && (g.type === "yes-no" || g.type === "text"),
+    );
+    if (unansweredRich.length > 0) {
+      const gate = unansweredRich[0];
+      if (gate.type === "yes-no") {
+        console.error(
+          `Project '${name}' has a pending yes-no gate: "${gate.label}". Use --yes or --no.`,
+        );
+      } else {
+        console.error(
+          `Project '${name}' has a pending text gate: "${gate.label}". Use --answer "<text>".`,
+        );
+      }
       process.exit(1);
     }
 
@@ -653,6 +890,16 @@ program
       console.log(`Approved: ${name}`);
       console.log("\u2713 Owner sign-off gate checked");
       console.log(`\u2713 Phase advanced: ${phase} \u2192 ${next}`);
+
+      try {
+        const data = JSON.stringify({ project: name, phase, nextPhase: next, flow: proj.frontmatter.flow });
+        execSync(
+          `eventlog emit "pipeline.review.approved" --source pipeline --data '${data}'`,
+          { stdio: "pipe", timeout: 5000 },
+        );
+      } catch {
+        // fire-and-forget
+      }
     } else {
       updateProject(name, {
         updated: ts,
@@ -664,6 +911,16 @@ program
       );
       console.log(`Approved: ${name}`);
       console.log("\u2713 Owner sign-off gate checked");
+
+      try {
+        const data = JSON.stringify({ project: name, phase, flow: proj.frontmatter.flow });
+        execSync(
+          `eventlog emit "pipeline.review.approved" --source pipeline --data '${data}'`,
+          { stdio: "pipe", timeout: 5000 },
+        );
+      } catch {
+        // fire-and-forget
+      }
     }
     console.log("Logged in Phase History.");
   });
@@ -762,6 +1019,22 @@ program
     }
     console.log(`Phase: ${phaseTyped} \u2192 ${next}`);
     console.log("Logged in Phase History.");
+
+    try {
+      const data = JSON.stringify({ project: name, from: phaseTyped, to: next, flow: proj.frontmatter.flow });
+      execSync(
+        `eventlog emit "pipeline.phase.advanced" --source pipeline --data '${data}'`,
+        { stdio: "pipe", timeout: 5000 },
+      );
+    } catch {
+      // fire-and-forget
+    }
+
+    postMemo(
+      `${name}: ${phaseTyped} → ${next}`,
+      `Pipeline project **${name}** manually advanced from ${phaseTyped} to ${next}.`,
+      { tags: "pipeline, phase-change", related: name },
+    );
   });
 
 // --- send-back ---
@@ -850,7 +1123,7 @@ program
         const projectName = slugify(desc);
         // Use default flow template for bugfix projects
         const defaultTemplate = listInstalledTemplates().find((t) => t.default);
-        const bugFlowName = defaultTemplate ? defaultTemplate.name : "sdlc-point-release-v1-0";
+        const bugFlowName = defaultTemplate ? defaultTemplate.name : "point-release";
         const bugFlowSlug = bugFlowName.toLowerCase().replace(/\./g, "-");
         const projectDir = getFlowProjectDir(bugFlowSlug, projectName);
         mkdirSync(projectDir, { recursive: true });
@@ -986,6 +1259,12 @@ program
     console.log(`Reason: "${reason}"`);
     console.log(`Cancelled from: ${phase} phase`);
     console.log(`Moved to: ${getArchivedProjectDir(name)}/`);
+
+    postMemo(
+      `${name}: cancelled`,
+      `Pipeline project **${name}** cancelled from ${phase} phase. Reason: ${reason}`,
+      { tags: "pipeline, cancelled", related: name },
+    );
   });
 
 // --- open ---
@@ -1080,6 +1359,22 @@ program
     console.log(`Archived: ${name}`);
     console.log("Outcome: completed");
     console.log(`Moved to: ${getArchivedProjectDir(name)}/`);
+
+    try {
+      const data = JSON.stringify({ project: name, flow: proj.frontmatter.flow });
+      execSync(
+        `eventlog emit "pipeline.project.archived" --source pipeline --data '${data}'`,
+        { stdio: "pipe", timeout: 5000 },
+      );
+    } catch {
+      // fire-and-forget
+    }
+
+    postMemo(
+      `${name}: archived`,
+      `Pipeline project **${name}** manually archived (completed).`,
+      { tags: "pipeline, archived", related: name },
+    );
   });
 
 // --- template ---
@@ -1123,7 +1418,7 @@ program
 
     // Use default flow template
     const defaultTemplate = listInstalledTemplates().find((t) => t.default);
-    const flowName = defaultTemplate ? defaultTemplate.name : "sdlc-point-release-v1-0";
+    const flowName = defaultTemplate ? defaultTemplate.name : "point-release";
     const flowSlug = flowName.toLowerCase().replace(/\./g, "-");
     const projectDir = getFlowProjectDir(flowSlug, name);
     mkdirSync(projectDir, { recursive: true });
