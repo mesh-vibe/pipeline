@@ -37,7 +37,7 @@ default: true
 
 phases:
   - name: design
-    worker: research-bot
+    worker: design-worker
     gates:
       - name: design-doc-complete
         label: Design doc complete
@@ -100,8 +100,8 @@ features:
   cancellation: true
 
 workers:
-  research-bot:
-    prompt: workers/research-bot.md
+  design-worker:
+    prompt: workers/design-worker.md
 `;
 
 const RESEARCH_YAML = `
@@ -111,7 +111,7 @@ default: false
 
 phases:
   - name: research
-    worker: research-bot
+    worker: research-worker
     gates:
       - name: topic-defined
         label: Research topic and scope defined
@@ -154,7 +154,7 @@ describe("loadTemplateFromYaml", () => {
     const template = loadTemplateFromYaml(SDLC_YAML);
     const design = template.phases[0];
     expect(design.name).toBe("design");
-    expect(design.worker).toBe("research-bot");
+    expect(design.worker).toBe("design-worker");
     expect(design.entryPoint).toBe(true); // first phase is always entry
     expect(design.terminal).toBe(false);
     expect(design.autoArchive).toBe(false);
@@ -222,8 +222,8 @@ describe("loadTemplateFromYaml", () => {
 
   it("parses workers", () => {
     const template = loadTemplateFromYaml(SDLC_YAML);
-    expect(template.workers["research-bot"]).toBeDefined();
-    expect(template.workers["research-bot"].prompt).toBe("workers/research-bot.md");
+    expect(template.workers["design-worker"]).toBeDefined();
+    expect(template.workers["design-worker"].prompt).toBe("workers/design-worker.md");
   });
 
   it("throws on invalid YAML", () => {

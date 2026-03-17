@@ -18,7 +18,18 @@ function phaseToSectionName(phase: string): string {
 
 function renderGates(gates: FlowGate[], checked: boolean = false): string {
   return gates
-    .map((g) => `- [${checked ? "x" : " "}] ${g.label}`)
+    .map((g) => {
+      const type = g.type || "checkbox";
+      if (type === "yes-no") {
+        return `- [?] ${g.label}`;
+      }
+      if (type === "text") {
+        // Ensure label ends with colon for text gates
+        const label = g.label.endsWith(":") ? g.label : g.label + ":";
+        return `- [>] ${label}`;
+      }
+      return `- [${checked ? "x" : " "}] ${g.label}`;
+    })
     .join("\n");
 }
 

@@ -35,12 +35,12 @@ export function getFlowArchiveDir(flowName: string): string {
 export function getActiveDir(): string {
   // Legacy: returns the default flow's active dir
   // Used internally when we already know the flow
-  return join(getFlowsDir(), "sdlc-point-release-v1-0", "active");
+  return join(getFlowsDir(), "point-release", "active");
 }
 
 export function getArchiveDir(): string {
   // Legacy: returns the default flow's archive dir
-  return join(getFlowsDir(), "sdlc-point-release-v1-0", "archive");
+  return join(getFlowsDir(), "point-release", "archive");
 }
 
 // --- Flow-aware project path lookup ---
@@ -49,9 +49,9 @@ function parseFlowFromProjectFile(projectFilePath: string): string {
   try {
     const content = readFileSync(projectFilePath, "utf-8");
     const match = content.match(/^flow:\s*(.+)$/m);
-    return match ? match[1].trim() : "sdlc-point-release-v1-0";
+    return match ? match[1].trim() : "point-release";
   } catch {
-    return "sdlc-point-release-v1-0";
+    return "point-release";
   }
 }
 
@@ -92,7 +92,7 @@ export function getProjectDir(name: string): string {
   const found = findProjectDir(name);
   if (found) return found;
   // Fallback to default flow for new projects (caller will set the right dir)
-  return join(getFlowsDir(), "sdlc-point-release-v1-0", "active", name);
+  return join(getFlowsDir(), "point-release", "active", name);
 }
 
 export function getArchivedProjectDir(name: string): string {
@@ -100,7 +100,7 @@ export function getArchivedProjectDir(name: string): string {
   const found = findArchivedProjectDir(name);
   if (found) return found;
   // Fallback to default flow
-  return join(getFlowsDir(), "sdlc-point-release-v1-0", "archive", name);
+  return join(getFlowsDir(), "point-release", "archive", name);
 }
 
 export function getProjectFile(name: string): string {

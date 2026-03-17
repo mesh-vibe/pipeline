@@ -22,10 +22,12 @@ export interface FlowPhase {
 export interface FlowGate {
   name: string;
   label: string;
+  type?: "checkbox" | "yes-no" | "text";
   description?: string;
   prompt?: string;
   verify?: string;
   artifacts?: string[];
+  onNo?: "cancel" | "shelve";
 }
 
 export interface GateVariants {

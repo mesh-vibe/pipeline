@@ -3,7 +3,7 @@ import type { ParsedProject } from "./types.js";
 // --- Types ---
 
 export type SuperviseAction =
-  | { type: "advance"; project: string; from: string; to: string }
+  | { type: "advance"; project: string; from: string; to: string; flow?: string }
   | { type: "archive"; project: string }
   | { type: "notify"; project: string; message: string; priority: "normal" | "high" }
   | { type: "queue-work"; project: string; phase: string; prompt: string }
@@ -142,6 +142,7 @@ export function decideAction(
       project: state.name,
       from: state.phase,
       to: "", // filled in by caller
+      flow: state.flow,
     };
   }
 

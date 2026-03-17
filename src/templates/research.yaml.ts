@@ -4,7 +4,7 @@ default: false
 
 phases:
   - name: research
-    worker: research-bot
+    worker: research-worker
     gates:
       - name: topic-defined
         label: Research topic and scope defined
@@ -20,8 +20,10 @@ phases:
     gates:
       - name: findings-reviewed
         label: Findings reviewed by owner
-      - name: owner-sign-off
-        label: Owner sign-off
+      - name: proceed-decision
+        label: "Proceed with implementation?"
+        type: yes-no
+        on-no: shelve
 
   - name: archive
     terminal: true

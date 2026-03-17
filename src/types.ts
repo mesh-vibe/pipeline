@@ -2,6 +2,8 @@ export type Phase = string;
 
 export type ProjectType = string;
 
+export type GateType = "checkbox" | "yes-no" | "text";
+
 export const VALID_TYPES: string[] = ["cli", "service", "library", "heartbeat-task"];
 
 export const PHASES: string[] = ["design", "review", "implement", "test", "final-review"];
@@ -9,6 +11,8 @@ export const PHASES: string[] = ["design", "review", "implement", "test", "final
 export interface Gate {
   label: string;
   checked: boolean;
+  type: GateType;
+  value?: string; // "yes"/"no" for yes-no, text content for text gates
 }
 
 export interface GateSection {

@@ -1,10 +1,10 @@
-export const SDLC_YAML = `name: sdlc-point-release-v1-0
+export const SDLC_YAML = `name: point-release
 description: Software development lifecycle — design, review, implement, test, final review
 default: true
 
 phases:
   - name: design
-    worker: research-bot
+    worker: design-worker
     gates:
       - name: design-doc-complete
         label: Design doc complete
@@ -112,6 +112,6 @@ features:
   cancellation: true
 
 workers:
-  research-bot:
-    prompt: workers/research-bot.md
+  design-worker:
+    prompt: workers/design-worker.md
 `;

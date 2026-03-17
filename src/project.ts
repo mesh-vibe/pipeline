@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type {
   ProjectFrontmatter,
   Gate,
+  GateType,
   GateSection,
   ParsedProject,
 } from "./types.js";
@@ -48,7 +49,7 @@ function toFrontmatter(fm: Record<string, string>): ProjectFrontmatter {
   return {
     name: fm["name"] || "",
     description: fm["description"] || "",
-    flow: fm["flow"] || "sdlc-point-release-v1-0",
+    flow: fm["flow"] || "point-release",
     "flow-version": parseInt(fm["flow-version"] || "1", 10),
     "project-type": fm["project-type"] || "cli",
     phase: fm["phase"] || "design",
@@ -144,12 +145,43 @@ export function parseGates(content: string): GateSection[] {
       sections.push(currentSection);
       continue;
     }
-    const gateMatch = line.match(/^- \[([ x])\] (.+)$/);
-    if (gateMatch && currentSection) {
+    if (!currentSection) continue;
+
+    // Checkbox: - [ ] label  or  - [x] label
+    const checkboxMatch = line.match(/^- \[([ x])\] (.+)$/);
+    if (checkboxMatch) {
       currentSection.gates.push({
-        checked: gateMatch[1] === "x",
-        label: gateMatch[2],
+        checked: checkboxMatch[1] === "x",
+        label: checkboxMatch[2],
+        type: "checkbox",
       });
+      continue;
+    }
+
+    // Yes-no: - [?] label  or  - [?yes] label  or  - [?no] label
+    const yesNoMatch = line.match(/^- \[\?(yes|no)?\] (.+)$/);
+    if (yesNoMatch) {
+      const answer = yesNoMatch[1] || undefined; // "yes", "no", or undefined
+      currentSection.gates.push({
+        checked: answer !== undefined,
+        label: yesNoMatch[2],
+        type: "yes-no",
+        value: answer,
+      });
+      continue;
+    }
+
+    // Text: - [>] label: value  (value may be empty)
+    const textMatch = line.match(/^- \[>\] (.+?):(.*)$/);
+    if (textMatch) {
+      const textValue = textMatch[2].trim();
+      currentSection.gates.push({
+        checked: textValue.length > 0,
+        label: textMatch[1] + ":",
+        type: "text",
+        value: textValue || undefined,
+      });
+      continue;
     }
   }
   return sections;
@@ -229,18 +261,50 @@ export function checkGate(name: string, gateLabel: string): void {
   writeFileSync(proj.filePath, content, "utf-8");
 }
 
+export function answerGate(name: string, gateLabel: string, answer: string, gateType: GateType): void {
+  const proj = readProject(name);
+  if (!proj) return;
+  const escaped = gateLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let content = proj.rawContent;
+
+  if (gateType === "yes-no") {
+    // Replace - [?] label with - [?yes] label or - [?no] label
+    content = content.replace(
+      new RegExp(`- \\[\\?\\] ${escaped}`),
+      `- [?${answer}] ${gateLabel}`,
+    );
+  } else if (gateType === "text") {
+    // Replace - [>] label: with - [>] label: answer
+    // The label in the file includes the colon, but in the Gate object it also has the colon
+    const labelBase = gateLabel.replace(/:$/, "");
+    const escapedBase = labelBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    content = content.replace(
+      new RegExp(`- \\[>\\] ${escapedBase}:.*$`, "m"),
+      `- [>] ${labelBase}: ${answer}`,
+    );
+  }
+
+  writeFileSync(proj.filePath, content, "utf-8");
+}
+
 export function uncheckPhaseGates(name: string, phase: string): void {
   const proj = readProject(name);
   if (!proj) return;
   const sectionName = phaseToSectionName(phase);
   const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const sectionRegex = new RegExp(
-    `(### ${escaped}\n)((?:- \\[[ x]\\] .+\n?)*)`,
+    `(### ${escaped}\n)((?:- \\[(?:[ x]|\\?(?:yes|no)?|>)\\] .+\n?)*)`,
     "m",
   );
   const match = proj.rawContent.match(sectionRegex);
   if (!match) return;
-  const unchecked = match[2].replace(/- \[x\]/g, "- [ ]");
+  let unchecked = match[2];
+  // Reset checkbox gates
+  unchecked = unchecked.replace(/- \[x\]/g, "- [ ]");
+  // Reset yes-no gates
+  unchecked = unchecked.replace(/- \[\?(yes|no)\]/g, "- [?]");
+  // Reset text gates (clear the value after the colon)
+  unchecked = unchecked.replace(/^(- \[>\] .+?:).*$/gm, "$1");
   const newContent = proj.rawContent.replace(sectionRegex, `$1${unchecked}`);
   writeFileSync(proj.filePath, newContent, "utf-8");
 }
@@ -443,9 +507,9 @@ function _readFlowFromFile(projectFile: string): string {
   try {
     const content = readFileSync(projectFile, "utf-8");
     const match = content.match(/^flow:\s*(.+)$/m);
-    return match ? match[1].trim() : "sdlc-point-release-v1-0";
+    return match ? match[1].trim() : "point-release";
   } catch {
-    return "sdlc-point-release-v1-0";
+    return "point-release";
   }
 }
 
@@ -461,16 +525,19 @@ export function today(): string {
 }
 
 export function timestamp(): string {
-  const d = new Date();
-  return `${d.toISOString().slice(0, 10)} ${d.toTimeString().slice(0, 5)}`;
+  return new Date().toISOString().slice(0, 16).replace("T", " ");
 }
 
 export function timeAgo(dateStr: string): string {
   if (!dateStr) return "";
   const now = Date.now();
-  const then = new Date(dateStr).getTime();
+  // Treat bare timestamps (no Z or offset) as UTC
+  const hasTimezone = dateStr.endsWith("Z") || /T\d{2}:\d{2}(:\d{2})?([+-]\d{2}:?\d{2})$/.test(dateStr);
+  const normalized = hasTimezone ? dateStr : dateStr.replace(/ /, "T") + "Z";
+  const then = new Date(normalized).getTime();
   if (isNaN(then)) return "";
   const diff = now - then;
+  if (diff < 0) return "just now";
   const minutes = Math.floor(diff / 60000);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);

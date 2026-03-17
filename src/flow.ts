@@ -22,15 +22,21 @@ function parsePhase(raw: Record<string, unknown>): FlowPhase {
   const rawGates = raw["gates"] as Record<string, unknown>[] | undefined;
   if (Array.isArray(rawGates)) {
     for (const g of rawGates) {
+      const rawType = g["type"] ? String(g["type"]) : undefined;
+      const gateType = rawType === "yes-no" || rawType === "text" ? rawType : undefined;
+      const rawOnNo = g["on-no"] ? String(g["on-no"]) : undefined;
+      const onNo = rawOnNo === "cancel" || rawOnNo === "shelve" ? rawOnNo : undefined;
       gates.push({
         name: String(g["name"] || ""),
         label: String(g["label"] || ""),
+        type: gateType,
         description: g["description"] ? String(g["description"]) : undefined,
         prompt: g["prompt"] ? String(g["prompt"]) : undefined,
         verify: g["verify"] ? String(g["verify"]) : undefined,
         artifacts: Array.isArray(g["artifacts"])
           ? g["artifacts"].map(String)
           : undefined,
+        onNo,
       });
     }
   }
@@ -42,16 +48,24 @@ function parsePhase(raw: Record<string, unknown>): FlowPhase {
     for (const [key, val] of Object.entries(rawVariants)) {
       if (key === "by") continue;
       if (Array.isArray(val)) {
-        gateVariants[key] = val.map((g: Record<string, unknown>) => ({
-          name: String(g["name"] || ""),
-          label: String(g["label"] || ""),
-          description: g["description"] ? String(g["description"]) : undefined,
-          prompt: g["prompt"] ? String(g["prompt"]) : undefined,
-          verify: g["verify"] ? String(g["verify"]) : undefined,
-          artifacts: Array.isArray(g["artifacts"])
-            ? g["artifacts"].map(String)
-            : undefined,
-        }));
+        gateVariants[key] = val.map((g: Record<string, unknown>) => {
+          const rawType = g["type"] ? String(g["type"]) : undefined;
+          const gateType = rawType === "yes-no" || rawType === "text" ? rawType : undefined;
+          const rawOnNo = g["on-no"] ? String(g["on-no"]) : undefined;
+          const onNo = rawOnNo === "cancel" || rawOnNo === "shelve" ? rawOnNo : undefined;
+          return {
+            name: String(g["name"] || ""),
+            label: String(g["label"] || ""),
+            type: gateType,
+            description: g["description"] ? String(g["description"]) : undefined,
+            prompt: g["prompt"] ? String(g["prompt"]) : undefined,
+            verify: g["verify"] ? String(g["verify"]) : undefined,
+            artifacts: Array.isArray(g["artifacts"])
+              ? g["artifacts"].map(String)
+              : undefined,
+            onNo,
+          };
+        });
       }
     }
   }
@@ -455,6 +469,20 @@ export function resolveAllPhaseGates(
     result.set(phase.name, resolveGates(phase, projectType));
   }
   return result;
+}
+
+// --- Gate Lookup ---
+
+export function getFlowGateByLabel(
+  phase: string,
+  label: string,
+  template: FlowTemplate,
+  projectType?: string,
+): FlowGate | undefined {
+  const p = template.phases.find((ph) => ph.name === phase);
+  if (!p) return undefined;
+  const gates = resolveGates(p, projectType);
+  return gates.find((g) => g.label === label);
 }
 
 // --- Verify Gate Checks ---

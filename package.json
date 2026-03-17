@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "meshvibe-memo": "file:../memo"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
