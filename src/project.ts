@@ -45,6 +45,14 @@ export function parseFrontmatter(content: string): Record<string, string> {
   return data;
 }
 
+/** Parse blocked-by: supports "a, b", "[a, b]", or single value */
+function parseBlockedBy(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const stripped = raw.replace(/^\[|\]$/g, "").trim();
+  if (!stripped) return [];
+  return stripped.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 function toFrontmatter(fm: Record<string, string>): ProjectFrontmatter {
   return {
     name: fm["name"] || "",
@@ -67,6 +75,7 @@ function toFrontmatter(fm: Record<string, string>): ProjectFrontmatter {
     "cancelled-from": fm["cancelled-from"] || "",
     "needs-interactive": fm["needs-interactive"] === "true",
     "needs-interactive-reason": fm["needs-interactive-reason"] || "",
+    "blocked-by": parseBlockedBy(fm["blocked-by"]),
   };
 }
 

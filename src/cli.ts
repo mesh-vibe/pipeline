@@ -311,6 +311,7 @@ program
   .option("--priority <n>", "Priority 1-5, 1=highest", "3")
   .option("--flow <flow>", "Flow template to use")
   .option("--start-at <phase>", "Start at a specific entry point phase")
+  .option("--blocked-by <projects>", "Comma-separated list of projects that must complete first")
   .action((name: string, description: string, opts) => {
     if (!NAME_REGEX.test(name)) {
       console.error(`Invalid project name '${name}'. Must be kebab-case.`);
@@ -377,8 +378,9 @@ program
     let projectMd: string;
     let startPhase: string;
     if (template) {
+      const blockedBy = opts.blockedBy ? opts.blockedBy.split(",").map((s: string) => s.trim()).filter(Boolean) : undefined;
       projectMd = generateProjectMdFromTemplate(
-        name, description, type, priority, today(), template, opts.startAt,
+        name, description, type, priority, today(), template, opts.startAt, 1, blockedBy,
       );
       startPhase = opts.startAt || template.phases[0].name;
     } else {
@@ -534,7 +536,10 @@ program
           console.log(
             `  ${proj.frontmatter.name.padEnd(25)} ${checked}/${total} gates   priority:${proj.frontmatter.priority}   updated ${updated}`,
           );
-          if (isNeedsInteractive(proj.frontmatter)) {
+          const blockedBy = proj.frontmatter["blocked-by"];
+          if (blockedBy && blockedBy.length > 0) {
+            console.log(`    \u26D4 Blocked by: ${blockedBy.join(", ")}`);
+          } else if (isNeedsInteractive(proj.frontmatter)) {
             console.log(`  \u26A0 Needs interactive: ${proj.frontmatter["needs-interactive-reason"]}`);
           } else if (phase === "review") {
             const reviewGates = getPhaseGates(proj.rawContent, "review");

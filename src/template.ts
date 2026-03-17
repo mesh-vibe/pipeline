@@ -76,6 +76,7 @@ export function generateProjectMdFromTemplate(
   template: FlowTemplate,
   startAtPhase?: string,
   flowVersion: number = 1,
+  blockedBy?: string[],
 ): string {
   const startIdx = startAtPhase
     ? template.phases.findIndex((p) => p.name === startAtPhase)
@@ -97,7 +98,7 @@ stuck-threshold-minutes: 120
 cancelled: false
 cancelled-reason:
 cancelled-at:
-cancelled-from:
+cancelled-from:${blockedBy && blockedBy.length > 0 ? `\nblocked-by: [${blockedBy.join(", ")}]` : ""}
 ---`;
 
   let gatesSections = "";

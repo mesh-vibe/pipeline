@@ -26,6 +26,7 @@ function makeState(overrides: Partial<ProjectState> = {}): ProjectState {
     cancelled: false,
     needsInteractive: false,
     needsInteractiveReason: "",
+    blockedBy: [],
     allGatesMet: false,
     hasOwnerSignoff: true,
     isHumanGate: false,

@@ -38,7 +38,13 @@ import { postMemo } from "./memo.js";
 
 // --- Build project state from ParsedProject ---
 
-function toProjectState(proj: ParsedProject, template: FlowTemplate | null): ProjectState {
+/** Filter blocked-by list to only blockers that are still active */
+function resolveBlockedBy(blockedBy: string[] | undefined, activeNames: Set<string>): string[] {
+  if (!blockedBy || blockedBy.length === 0) return [];
+  return blockedBy.filter((name) => activeNames.has(name));
+}
+
+function toProjectState(proj: ParsedProject, template: FlowTemplate | null, activeNames: Set<string>): ProjectState {
   const fm = proj.frontmatter;
   const phase = fm.phase;
   const gates = getPhaseGates(proj.rawContent, phase);
@@ -85,6 +91,7 @@ function toProjectState(proj: ParsedProject, template: FlowTemplate | null): Pro
     cancelled: fm.cancelled,
     needsInteractive: fm["needs-interactive"],
     needsInteractiveReason: fm["needs-interactive-reason"],
+    blockedBy: resolveBlockedBy(fm["blocked-by"], activeNames),
     allGatesMet: gatesMet,
     hasOwnerSignoff: hasHumanInputGate ? gates.filter(isHumanInputGate).every((g) => g.checked) : true,
     isHumanGate: phaseIsHumanGate,
@@ -395,10 +402,13 @@ export function runSupervise(
     return t;
   }
 
+  // Build set of active project names for blocked-by resolution
+  const activeNames = new Set(projects.map((p) => p.frontmatter.name));
+
   for (const proj of projects) {
     try {
       const template = getTemplate(proj.frontmatter.flow);
-      const state = toProjectState(proj, template);
+      const state = toProjectState(proj, template, activeNames);
       let action = decideAction(state, queuedCount, options.limit, options.queue, now);
 
       // Resolve "to" phase for advance actions

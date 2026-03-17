@@ -38,6 +38,7 @@ export interface ProjectFrontmatter {
   "cancelled-from": string;
   "needs-interactive": boolean;
   "needs-interactive-reason": string;
+  "blocked-by"?: string[];
 }
 
 export interface ParsedProject {

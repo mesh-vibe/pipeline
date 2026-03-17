@@ -7,7 +7,7 @@ export type SuperviseAction =
   | { type: "archive"; project: string }
   | { type: "notify"; project: string; message: string; priority: "normal" | "high" }
   | { type: "queue-work"; project: string; phase: string; prompt: string }
-  | { type: "skip"; project: string; reason: "active" | "limit" | "template" | "cancelled" | "human-gate-pending" | "needs-interactive" | "already-queued" }
+  | { type: "skip"; project: string; reason: "active" | "limit" | "template" | "cancelled" | "human-gate-pending" | "needs-interactive" | "already-queued" | "blocked" }
   | { type: "error"; project: string; error: string }
   | { type: "complete-pq"; project: string }
   | { type: "queue-step-pq"; project: string; step: string; prompt: string }
@@ -98,6 +98,7 @@ export interface ProjectState {
   isTerminal: boolean;
   needsInteractive: boolean;
   needsInteractiveReason: string;
+  blockedBy: string[];
   uncheckedGateLabels: string[];
   projectDir: string;
   specDir: string;
@@ -112,6 +113,10 @@ export function decideAction(
 ): SuperviseAction {
   if (state.cancelled) {
     return { type: "skip", project: state.name, reason: "cancelled" };
+  }
+
+  if (state.blockedBy.length > 0) {
+    return { type: "skip", project: state.name, reason: "blocked" };
   }
 
   // Case D — needs-interactive: notify and skip, do NOT re-queue
